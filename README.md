@@ -65,9 +65,17 @@ sudo snap install sticky-notes
 ```
 sticky-notes/
 │
-├── main.py               # Main application code
 ├── snap/
 │   └── snapcraft.yaml    # Snap packaging configuration
+│
+├── stickynotes/          # Main Python package for the application
+│   ├── __init__.py       # Makes 'stickynotes' a Python package
+│   ├── config.py         # App configuration and constants
+│   ├── note_window.py    # The StickyNote window class
+│   ├── tray_manager.py   # Manages the system tray icon and app logic
+│   └── utils.py          # Helper functions (e.g., icon creation)
+│
+├── run_stickynotes.py    # The script to launch the application
 ├── LICENSE               # Open-source license
 └── README.md             # Documentation
 ```
