@@ -56,7 +56,7 @@ class TrayManager:
         settings.beginGroup("notes")
         
         note_ids_loaded = set()
-        for key in settings.childKeys():
+        for key in settings.childGroups():
             note_id = key.split('/')[0]
             if note_id not in note_ids_loaded:
                 content = settings.value(f"{note_id}/content", "")
