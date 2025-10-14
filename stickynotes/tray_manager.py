@@ -29,13 +29,21 @@ class TrayManager:
         self.tray_icon.setToolTip("Sticky Notes")
 
         self.menu = QMenu()
-        new_note_action = QAction("New Note", parent=self.tray_icon)
+        
+        # New Note action
+        new_note_action = QAction("📝  New Note", parent=self.tray_icon)
         new_note_action.triggered.connect(self._create_new_note)
         self.menu.addAction(new_note_action)
         
+        # Show All Notes action
+        show_all_action = QAction("👁️  Show All Notes", parent=self.tray_icon)
+        show_all_action.triggered.connect(self._show_all_notes)
+        self.menu.addAction(show_all_action)
+        
         self.menu.addSeparator()
         
-        quit_action = QAction("Quit", parent=self.tray_icon)
+        # Quit action
+        quit_action = QAction("❌  Quit", parent=self.tray_icon)
         quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(quit_action)
         
@@ -48,10 +56,22 @@ class TrayManager:
         
         # Connect signals
         note_window.noteDeleted.connect(self._handle_note_deletion)
-        note_window.newNoteRequested.connect(self._create_new_note)  # NEW: Connect new note signal
+        note_window.newNoteRequested.connect(self._create_new_note)
         
         note_window.show()
         self.open_notes[note_window.note_id] = note_window  # Store by ID
+
+    def _show_all_notes(self):
+        """Brings all notes to the front and makes them visible."""
+        if not self.open_notes:
+            # If no notes exist, create a new one
+            self._create_new_note()
+            return
+        
+        for note_window in self.open_notes.values():
+            note_window.show()  # Make sure it's visible (not minimized)
+            note_window.raise_()  # Bring to front
+            note_window.activateWindow()  # Give it focus
 
     def _handle_note_deletion(self, note_id):
         """Removes a note from settings and memory."""
