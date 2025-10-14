@@ -174,7 +174,7 @@ This keeps your repository clean when committed to GitHub.
 
 ![Screenshot of Sticky Notes](https://via.placeholder.com/800x400?text=Sticky+Notes+App+Preview)
 
---- -->
+-->
 
 ## 📜 License
 
