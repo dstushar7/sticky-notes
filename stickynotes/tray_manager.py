@@ -45,7 +45,11 @@ class TrayManager:
     def _create_new_note(self, note_id=None, content="", geometry=None):
         """Creates and shows a new sticky note window."""
         note_window = StickyNote(note_id, content, geometry)
-        note_window.noteDeleted.connect(self._handle_note_deletion)  # Connect delete signal
+        
+        # Connect signals
+        note_window.noteDeleted.connect(self._handle_note_deletion)
+        note_window.newNoteRequested.connect(self._create_new_note)  # NEW: Connect new note signal
+        
         note_window.show()
         self.open_notes[note_window.note_id] = note_window  # Store by ID
 
