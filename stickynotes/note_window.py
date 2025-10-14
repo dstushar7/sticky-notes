@@ -9,8 +9,9 @@ from . import config
 class StickyNote(QMainWindow):
     """Represents a single sticky note window."""
     
-    # Signal emitted when user wants to delete this note
-    noteDeleted = pyqtSignal(str)  # Emits note_id
+    # Signals
+    noteDeleted = pyqtSignal(str)  # Emits note_id when note should be deleted
+    newNoteRequested = pyqtSignal()  # Emits when user wants to create a new note
     
     def __init__(self, note_id=None, content="", geometry=None, parent=None):
         super().__init__(parent)
@@ -77,6 +78,13 @@ class StickyNote(QMainWindow):
                 margin: 5px 0px;
             }}
         """)
+        
+        # Add New Note action at the top
+        new_note_action = QAction("📝  New Note", self)
+        new_note_action.triggered.connect(self.newNoteRequested.emit)
+        context_menu.addAction(new_note_action)
+        
+        context_menu.addSeparator()
         
         # Add Undo action
         undo_action = QAction("Undo", self)
