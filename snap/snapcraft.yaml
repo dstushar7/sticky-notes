@@ -1,39 +1,50 @@
-# # A unique, lowercase name for your app on the Snap Store.
-# name: yourname-stickynotes # <-- IMPORTANT: Change this to your registered name.
-# base: core22
-# version: '1.0'
-# summary: A simple and elegant sticky notes app for your desktop.
-# description: |
-#   A lightweight sticky notes app that runs in the system tray. Notes are
-#   automatically saved and restored across sessions.
+name: stickynotes
+title: Sticky Notes
+base: core24
+version: '1.0.0'
+summary: A simple and elegant sticky notes app for your desktop.
+description: |
+  Sticky Notes is a lightweight note-taking application
+  for your Linux desktop. Run it from the system tray,
+  create multiple notes, and enjoy automatic saving between sessions.
+  Built with Python and PyQt6.
 
-# grade: stable
-# confinement: strict
+grade: stable
+confinement: strict
 
-# apps:
-#   yourname-stickynotes: # <-- IMPORTANT: Change this to match the 'name' above.
-#     # The command now directly calls the Python entry point.
-#     command: venv/bin/python3 run_stickynotes.py
-    
-#     # Essential permissions for a desktop GUI application.
-#     plugs:
-#       - desktop
-#       - desktop-legacy
-#       - wayland
-#       - x11
+license: MIT
+contact: https://github.com/dstushar7
+website: https://github.com/dstushar7/sticky-notes
+source-code: https://github.com/dstushar7/sticky-notes
+issues: https://github.com/dstushar7/sticky-notes/issues
+donation: https://www.buymeacoffee.com/dstushar7
 
-# parts:
-#   stickynotes-app:
-#     plugin: python
-#     source: . # Use the code from the current project directory.
-    
-#     # Python dependencies for your application.
-#     python-packages:
-#       - PyQt6
-      
-#     # Essential system libraries required for PyQt6 to run correctly.
-#     # Without these, you will get the 'xcb platform plugin' error.
-#     stage-packages:
-#       - libxcb-cursor0
-#       - libxkbcommon-x11-0
-#       - libgl1-mesa-glx
+apps:
+  sticky-notes:
+    command: bin/launch-stickynotes
+    extensions: [gnome]
+    plugs:
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - home
+      - network
+
+parts:
+  stickynotes-app:
+    plugin: python
+    source: .
+    python-requirements: [requirements.txt]
+    stage-packages:
+      - libgl1
+      - libxcb-cursor0
+      - libxkbcommon-x11-0
+    override-build: |
+      craftctl default
+      mkdir -p $SNAPCRAFT_PART_INSTALL/bin
+      cat << 'EOF' > $SNAPCRAFT_PART_INSTALL/bin/launch-stickynotes
+      #!/bin/sh
+      exec python3 $SNAP/run_stickynotes.py "$@"
+      EOF
+      chmod +x $SNAPCRAFT_PART_INSTALL/bin/launch-stickynotes
