@@ -1,50 +1,50 @@
-name: stickynotes
-title: Sticky Notes
-base: core24
-version: '1.0.0'
-summary: A simple and elegant sticky notes app for your desktop.
+name: sticky-notes-qt6
+base: core22
+version: '1.0'
+summary: A modern Qt6 sticky notes app with autosave and tray icon
 description: |
-  Sticky Notes is a lightweight note-taking application
-  for your Linux desktop. Run it from the system tray,
-  create multiple notes, and enjoy automatic saving between sessions.
-  Built with Python and PyQt6.
+  A feature-rich sticky notes application built with PyQt6 that helps you organize your workspace and notes easily.
 
 grade: stable
 confinement: strict
 
-license: MIT
-contact: https://github.com/dstushar7
-website: https://github.com/dstushar7/sticky-notes
-source-code: https://github.com/dstushar7/sticky-notes
-issues: https://github.com/dstushar7/sticky-notes/issues
-donation: https://www.buymeacoffee.com/dstushar7
-
 apps:
-  sticky-notes:
-    command: bin/launch-stickynotes
-    extensions: [gnome]
-    plugs:
-      - desktop
-      - desktop-legacy
-      - wayland
-      - x11
-      - home
-      - network
+  sticky-notes-qt6:
+    command: qt6-launch $SNAP/bin/python3 $SNAP/run_stickynotes.py
+    desktop: snap/gui/sticky-notes.desktop
+    plugs: [desktop, desktop-legacy, x11, wayland, unity7, home]
 
 parts:
-  stickynotes-app:
+  sticky-notes-qt6:
     plugin: python
     source: .
-    python-requirements: [requirements.txt]
+    python-packages:
+      - PyQt6
+      - PyQt6-Qt6
+      - PyQt6_sip
     stage-packages:
+      - python3-pyqt6
+      - libqt6core6
+      - libqt6gui6
+      - libqt6widgets6
+      - qt6-gtk-platformtheme
       - libgl1
-      - libxcb-cursor0
+      - libxcb1
       - libxkbcommon-x11-0
+      - libxcb-icccm4
+      - libxcb-image0
+      - libxcb-keysyms1
+      - libxcb-randr0
+      - libxcb-render-util0
+      - libxcb-shape0
+      - libxcb-shm0
+      - libxcb-sync1
+      - libxcb-xfixes0
+      - libxcb-xinerama0
+      - libxcb1-dev
+    build-packages:
+      - python3-dev
     override-build: |
       craftctl default
-      mkdir -p $SNAPCRAFT_PART_INSTALL/bin
-      cat << 'EOF' > $SNAPCRAFT_PART_INSTALL/bin/launch-stickynotes
-      #!/bin/sh
-      exec python3 $SNAP/run_stickynotes.py "$@"
-      EOF
-      chmod +x $SNAPCRAFT_PART_INSTALL/bin/launch-stickynotes
+      cp $CRAFT_PROJECT_DIR/run_stickynotes.py $CRAFT_PART_INSTALL/
+      cp $CRAFT_PROJECT_DIR/snap/qt6-launch $CRAFT_PART_INSTALL/
