@@ -1,5 +1,5 @@
 name: sticky-notes-qt6
-base: core22
+base: core24
 version: '1.0'
 summary: A modern Qt6 sticky notes app with autosave and tray icon
 description: |
@@ -8,10 +8,17 @@ description: |
 grade: stable
 confinement: strict
 
+license: MIT
+contact: https://github.com/dstushar7
+website: https://github.com/dstushar7
+source-code: https://github.com/dstushar7/sticky-notes-qt6
+issues: https://github.com/dstushar7/sticky-notes-qt6/issues
+donation: https://www.buymeacoffee.com/dstushar7
+
 apps:
   sticky-notes-qt6:
     command: qt6-launch $SNAP/bin/python3 $SNAP/run_stickynotes.py
-    desktop: snap/gui/sticky-notes.desktop
+    desktop: $SNAP/snap/gui/sticky-notes.desktop
     plugs: [desktop, desktop-legacy, x11, wayland, unity7, home]
 
 parts:
