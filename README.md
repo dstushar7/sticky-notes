@@ -151,23 +151,6 @@ Suggested areas for contribution:
 
 ---
 
-## 🧾 .gitignore Recommendations
-
-Make sure `.gitignore` includes:
-
-```
-venv/
-__pycache__/
-*.pyc
-*.log
-*.snap
-.DS_Store
-```
-
-This keeps your repository clean when committed to GitHub.
-
----
-
 <!-- ## 🖼️ Screenshot
 
 *(Optional: replace this placeholder once you capture your app’s look)*
