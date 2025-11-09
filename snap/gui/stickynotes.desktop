@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Sticky Notes
+Comment=A simple sticky notes application with PyQt6 system tray support
+Exec=stickynotes
+Icon=${SNAP}/meta/gui/stickynotes.png
+Terminal=true
+Type=Application
+Categories=Utility;

@@ -20,13 +20,13 @@ issues: https://github.com/dstushar7/sticky-notes-qt6/issues
 donation: https://www.buymeacoffee.com/dstushar7
 
 apps:
-  stickynotes-app:
+  stickynotes:
     command: qt6-launch $SNAP/bin/python3 $SNAP/run_stickynotes.py
-    # desktop: sticky-notes.desktop
+    desktop: gui/stickynotes.desktop
     plugs: [desktop, desktop-legacy, x11, wayland, unity7, home]
 
 parts:
-  stickynotes-app:
+  stickynotes:
     plugin: python
     source: .
     python-packages:
@@ -58,3 +58,6 @@ parts:
       craftctl default
       cp $CRAFT_PROJECT_DIR/run_stickynotes.py $CRAFT_PART_INSTALL/
       cp $CRAFT_PROJECT_DIR/snap/qt6-launch $CRAFT_PART_INSTALL/
+    override-prime: |
+      craftctl default
+      cp -r $CRAFT_PROJECT_DIR/snap/gui $CRAFT_PRIME/
