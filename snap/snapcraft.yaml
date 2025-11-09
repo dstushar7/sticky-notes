@@ -1,9 +1,13 @@
-name: sticky-notes-qt6
+name: stickynotes
+title: Sticky Notes
 base: core24
-version: '1.0'
-summary: A modern Qt6 sticky notes app with autosave and tray icon
+version: '1.0.0'
+summary: A simple and elegant sticky notes app for your desktop.
 description: |
-  A feature-rich sticky notes application built with PyQt6 that helps you organize your workspace and notes easily.
+  Sticky Notes is a lightweight note-taking application
+  for your Linux desktop. Run it from the system tray,
+  create multiple notes, and enjoy automatic saving between sessions.
+  Built with Python and PyQt6.
 
 grade: stable
 confinement: strict
@@ -16,13 +20,13 @@ issues: https://github.com/dstushar7/sticky-notes-qt6/issues
 donation: https://www.buymeacoffee.com/dstushar7
 
 apps:
-  sticky-notes-qt6:
+  stickynotes-app:
     command: qt6-launch $SNAP/bin/python3 $SNAP/run_stickynotes.py
     # desktop: sticky-notes.desktop
     plugs: [desktop, desktop-legacy, x11, wayland, unity7, home]
 
 parts:
-  sticky-notes-qt6:
+  stickynotes-app:
     plugin: python
     source: .
     python-packages:
@@ -34,7 +38,6 @@ parts:
       - libqt6core6
       - libqt6gui6
       - libqt6widgets6
-      - qt6-gtk-platformtheme
       - libgl1
       - libxcb1
       - libxkbcommon-x11-0
