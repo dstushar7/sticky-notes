@@ -18,7 +18,7 @@ donation: https://www.buymeacoffee.com/dstushar7
 apps:
   sticky-notes-qt6:
     command: qt6-launch $SNAP/bin/python3 $SNAP/run_stickynotes.py
-    desktop: $SNAP/snap/gui/sticky-notes.desktop
+    # desktop: sticky-notes.desktop
     plugs: [desktop, desktop-legacy, x11, wayland, unity7, home]
 
 parts:
