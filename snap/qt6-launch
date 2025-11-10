@@ -4,6 +4,6 @@ export QT_QPA_PLATFORM_PLUGIN_PATH="$SNAP/usr/lib/x86_64-linux-gnu/qt6/plugins/p
 export QT_PLUGIN_PATH="$SNAP/usr/lib/x86_64-linux-gnu/qt6/plugins"
 export QML2_IMPORT_PATH="$SNAP/usr/lib/x86_64-linux-gnu/qt6/qml"
 export LD_LIBRARY_PATH="$SNAP/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
-export PYTHONPATH="$SNAP/usr/lib/python3/dist-packages:$PYTHONPATH"
+export PYTHONPATH="$SNAP:$SNAP/usr/lib/python3/dist-packages:$PYTHONPATH"
 
 exec "$@"
