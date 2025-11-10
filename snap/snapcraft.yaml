@@ -34,9 +34,11 @@ parts:
       - PyQt6-Qt6
       - PyQt6_sip
     stage-packages:
+      - qt6-qpa-plugins
       - python3-pyqt6
       - libqt6core6
       - libqt6gui6
+      - libqt6network6
       - libqt6widgets6
       - libgl1
       - libxcb1
@@ -52,10 +54,12 @@ parts:
       - libxcb-xfixes0
       - libxcb-xinerama0
       - libxcb1-dev
+      - libxcb-cursor0
     build-packages:
       - python3-dev
     override-build: |
       craftctl default
+      cp -r $CRAFT_PROJECT_DIR/stickynotes $CRAFT_PART_INSTALL/
       cp $CRAFT_PROJECT_DIR/run_stickynotes.py $CRAFT_PART_INSTALL/
       cp $CRAFT_PROJECT_DIR/snap/qt6-launch $CRAFT_PART_INSTALL/
     override-prime: |
