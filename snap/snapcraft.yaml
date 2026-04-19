@@ -1,7 +1,7 @@
 name: stickynotes
 title: Sticky Notes
 base: core24
-version: '1.0.0'
+version: '1.1.0'
 summary: A simple and elegant sticky notes app for your desktop.
 description: |
   Sticky Notes is a lightweight note-taking application
@@ -13,11 +13,10 @@ grade: stable
 confinement: strict
 
 license: MIT
-contact: https://github.com/dstushar7
-website: https://github.com/dstushar7
-source-code: https://github.com/dstushar7/sticky-notes-qt6
-issues: https://github.com/dstushar7/sticky-notes-qt6/issues
-donation: https://www.buymeacoffee.com/dstushar7
+contact: contact@dabobrotosarkar.com 
+website: https://dabobrotosarkar.com/
+source-code: https://github.com/dstushar7/sticky-notes
+issues: https://github.com/dstushar7/sticky-notes/issues
 
 apps:
   stickynotes:
