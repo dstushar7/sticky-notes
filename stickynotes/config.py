@@ -2,7 +2,7 @@
 
 # Configuration for QSettings
 APP_NAME = "StickyNotesApp"
-ORG_NAME = "YourName"  # Replace with your name or organization
+ORG_NAME = "dstushar7"  
 
 # Note Styling
 NOTE_BACKGROUND_COLOR = "#fdfd96"
