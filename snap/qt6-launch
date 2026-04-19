@@ -1,5 +1,7 @@
 #!/bin/sh
 
+unset SESSION_MANAGER
+
 export QT_QPA_PLATFORM_PLUGIN_PATH="$SNAP/usr/lib/x86_64-linux-gnu/qt6/plugins/platforms"
 export QT_PLUGIN_PATH="$SNAP/usr/lib/x86_64-linux-gnu/qt6/plugins"
 export QML2_IMPORT_PATH="$SNAP/usr/lib/x86_64-linux-gnu/qt6/qml"
