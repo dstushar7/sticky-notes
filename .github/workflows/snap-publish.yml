@@ -1,0 +1,26 @@
+name: Publish Snap to Store
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Build the Snap package
+        uses: snapcore/action-build@v1
+        id: build
+        # This official action automatically reads your snapcraft.yaml and builds the app
+
+      - name: Publish the Snap to the Store
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: stable
