@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '1.1.0'
+version: '1.1.1'
 summary: A simple and elegant sticky notes app for your desktop.
 description: |
   Sticky Notes is a lightweight note-taking application
@@ -13,16 +13,17 @@ grade: stable
 confinement: strict
 
 license: MIT
-contact: contact@dabobrotosarkar.com 
+contact: contact@dabobrotosarkar.com
 website: https://dabobrotosarkar.com/
 source-code: https://github.com/dstushar7/sticky-notes
 issues: https://github.com/dstushar7/sticky-notes/issues
 
 apps:
   stickynotes:
-    command: qt6-launch $SNAP/bin/python3 $SNAP/run_stickynotes.py
+    command: bin/python3 $SNAP/run_stickynotes.py
+    extensions: [gnome]
     desktop: gui/stickynotes.desktop
-    plugs: [desktop, desktop-legacy, x11, wayland, unity7, home]
+    plugs: [home]
 
 parts:
   stickynotes:
@@ -33,34 +34,68 @@ parts:
       - PyQt6-Qt6
       - PyQt6_sip
     stage-packages:
-      - qt6-qpa-plugins
-      - python3-pyqt6
-      - libqt6core6
-      - libqt6gui6
-      - libqt6network6
-      - libqt6widgets6
-      - libgl1
-      - libxcb1
-      - libxkbcommon-x11-0
-      - libxcb-icccm4
-      - libxcb-image0
-      - libxcb-keysyms1
-      - libxcb-randr0
-      - libxcb-render-util0
-      - libxcb-shape0
-      - libxcb-shm0
-      - libxcb-sync1
-      - libxcb-xfixes0
-      - libxcb-xinerama0
-      - libxcb1-dev
       - libxcb-cursor0
-    build-packages:
-      - python3-dev
     override-build: |
       craftctl default
       cp -r $CRAFT_PROJECT_DIR/stickynotes $CRAFT_PART_INSTALL/
       cp $CRAFT_PROJECT_DIR/run_stickynotes.py $CRAFT_PART_INSTALL/
-      cp $CRAFT_PROJECT_DIR/snap/qt6-launch $CRAFT_PART_INSTALL/
     override-prime: |
       craftctl default
+      # Copy GUI assets
       cp -r $CRAFT_PROJECT_DIR/snap/gui $CRAFT_PRIME/
+
+      # Drop pip/setuptools/wheel — not needed at runtime
+      rm -rf $CRAFT_PRIME/lib/python*/site-packages/pip*
+      rm -rf $CRAFT_PRIME/lib/python*/site-packages/setuptools*
+      rm -rf $CRAFT_PRIME/lib/python*/site-packages/wheel*
+      rm -rf $CRAFT_PRIME/lib/python*/site-packages/_distutils_hack
+
+      # Prune unused PyQt6 modules — sticky-notes only needs QtCore/QtGui/QtWidgets
+      PYQT6="$CRAFT_PRIME/lib/python3.12/site-packages/PyQt6"
+      QT6LIB="$PYQT6/Qt6/lib"
+      QT6PLUG="$PYQT6/Qt6/plugins"
+
+      # Remove PyQt6 Python bindings we don't use
+      for mod in QtQuick QtQml QtOpenGL QtNetwork QtMultimedia QtMultimediaWidgets \
+                 QtBluetooth QtSql QtDesigner QtTest QtPdf QtPdfWidgets QtPrintSupport \
+                 QtPositioning QtSensors QtSerialPort QtWebChannel QtWebSockets \
+                 QtXml QtSvg QtSvgWidgets QtQuick3D QtQuickWidgets QtRemoteObjects \
+                 QtNfc QtDBus QtHelp QtCharts QtDataVisualization QtSpatialAudio \
+                 QtTextToSpeech Qt3DCore Qt3DRender Qt3DInput Qt3DLogic Qt3DAnimation \
+                 Qt3DExtras QtQuickControls2; do
+        rm -f "$PYQT6/${mod}.abi3.so"
+      done
+
+      # Remove unused Qt6 shared libraries (keep Core/Gui/Widgets/DBus/XcbQpa/OpenGL)
+      find "$QT6LIB" -maxdepth 1 -name 'libQt6*.so*' \
+        ! -name 'libQt6Core.so*' \
+        ! -name 'libQt6Gui.so*' \
+        ! -name 'libQt6Widgets.so*' \
+        ! -name 'libQt6DBus.so*' \
+        ! -name 'libQt6XcbQpa.so*' \
+        ! -name 'libQt6OpenGL.so*' \
+        -delete
+
+      # Drop QML, translations, Quick3D/Multimedia-only assets, and libavcodec (15 MB)
+      rm -rf "$PYQT6/Qt6/qml"
+      rm -rf "$PYQT6/Qt6/translations"
+      rm -rf "$PYQT6/Qt6/resources"
+      rm -f  "$QT6LIB"/libav*.so* "$QT6LIB"/libsw*.so*
+
+      # Prune plugin folders we don't use (keep platforms, styles, imageformats, etc.)
+      if [ -d "$QT6PLUG" ]; then
+        find "$QT6PLUG" -mindepth 1 -maxdepth 1 -type d \
+          ! -name 'platforms' \
+          ! -name 'platforminputcontexts' \
+          ! -name 'platformthemes' \
+          ! -name 'styles' \
+          ! -name 'imageformats' \
+          ! -name 'iconengines' \
+          ! -name 'xcbglintegrations' \
+          ! -name 'wayland-*' \
+          -exec rm -rf {} +
+      fi
+
+      # Drop PyQt6 dev bindings (.pyi/.sip) and uic (Designer tool)
+      rm -rf "$PYQT6/bindings"
+      rm -rf "$PYQT6/uic"
