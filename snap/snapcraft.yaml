@@ -1,8 +1,9 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '1.1.1'
+version: '1.1.2'
 summary: A simple and elegant sticky notes app for your desktop.
+icon: snap/gui/stickynotes.png
 description: |
   Sticky Notes is a lightweight note-taking application
   for your Linux desktop. Run it from the system tray,
