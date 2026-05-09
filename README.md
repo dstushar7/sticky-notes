@@ -18,7 +18,6 @@ Notes are automatically saved and fully restored between sessions.
 - 🎨 **7 color themes** — Yellow, Green, Pink, Purple, Blue, Gray, Charcoal
 - ✍️ **Rich text formatting** — Bold (`Ctrl+B`), Italic (`Ctrl+I`), Underline (`Ctrl+U`)
 - 📋 **Bullet lists** — Toggle with `Ctrl+Shift+L`; `Enter` continues the list, `Shift+Enter` breaks out
-- 📌 **Always-on-top** toggle — per note, persisted across sessions
 - 🪄 **Collapse / expand** — double-click the title bar to collapse a note to just its header
 - 🖱️ **Resizable from all 8 edges and corners** — no OS chrome needed
 - 🧩 System tray integration for quick access
@@ -32,7 +31,7 @@ Notes are automatically saved and fully restored between sessions.
 ### 🧩 Option 1 – From the Snap Store (Recommended)
 
 ```bash
-sudo snap install sticky-notes
+sudo snap install stickynotes-dabobroto
 ```
 
 ---
@@ -76,7 +75,7 @@ Right-click the tray icon to:
 | Action | How |
 |--------|-----|
 | **New note (same color)** | Click the `+` button in the title bar |
-| **Color / delete / pin** | Click the `•••` button → options panel |
+| **Color / delete** | Click the `•••` button → options panel |
 | **Bold** | `Ctrl+B` |
 | **Italic** | `Ctrl+I` |
 | **Underline** | `Ctrl+U` |
@@ -85,7 +84,7 @@ Right-click the tray icon to:
 | **Break out of list** | `Shift+Enter` |
 | **Collapse / expand** | Double-click the title bar spacer |
 | **Drag window** | Click and drag the title bar spacer |
-| **Resize window** | Drag any edge or corner (8 px grab zone) |
+| **Resize window** | Drag any edge or corner (16 px grab zone) |
 
 ---
 
@@ -109,7 +108,6 @@ Clicking `•••` opens a floating options panel:
 ┌─────────────────────────────────┐
 │  🟡  🟢  🩷  🟣  🔵  ⬜  ⬛      │  ← color swatches (circle buttons)
 │  🗑  Delete Note                 │
-│  📌  Always on Top               │
 └─────────────────────────────────┘
 ```
 
@@ -158,10 +156,13 @@ pip install -r requirements.txt
 | `Ctrl+B` | Bold |
 | `Ctrl+I` | Italic |
 | `Ctrl+U` | Underline |
+| `Ctrl+Shift+S` | Strikethrough |
 | `Ctrl+Shift+L` | Toggle bullet list |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Y` | Redo |
 | `Ctrl+A` | Select all |
+
+All formatting actions are also available via the **bottom toolbar** on each note: `B` `I` `U` `S` `•`. Buttons highlight when the cursor is in already-formatted text.
 
 ---
 

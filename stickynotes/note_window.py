@@ -2,11 +2,11 @@
 
 import uuid
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
-    QSizePolicy, QGraphicsDropShadowEffect,
+    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel,
+    QSizePolicy, QGraphicsDropShadowEffect, QApplication,
 )
 from PyQt6.QtCore import (
-    QSettings, pyqtSignal, Qt, QPoint, QRect,
+    QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray,
     QPropertyAnimation, QParallelAnimationGroup, QEasingCurve,
     QEvent, QTimer,
 )
@@ -31,6 +31,18 @@ _CURSORS = {
     _SW: Qt.CursorShape.SizeBDiagCursor,
     _NW: Qt.CursorShape.SizeFDiagCursor,
     _SE: Qt.CursorShape.SizeFDiagCursor,
+}
+
+# Map our resize zones to Qt.Edge bitfields for QWindow.startSystemResize
+_EDGES = {
+    _N:  Qt.Edge.TopEdge,
+    _S:  Qt.Edge.BottomEdge,
+    _E:  Qt.Edge.RightEdge,
+    _W:  Qt.Edge.LeftEdge,
+    _NE: Qt.Edge.TopEdge | Qt.Edge.RightEdge,
+    _NW: Qt.Edge.TopEdge | Qt.Edge.LeftEdge,
+    _SE: Qt.Edge.BottomEdge | Qt.Edge.RightEdge,
+    _SW: Qt.Edge.BottomEdge | Qt.Edge.LeftEdge,
 }
 
 
@@ -67,7 +79,6 @@ class NoteTextEdit(QTextEdit):
 class OptionsPanel(QWidget):
     themeSelected = pyqtSignal(str)
     deleteRequested = pyqtSignal()
-    alwaysOnTopToggled = pyqtSignal(bool)
 
     _SWATCHES = [
         ("yellow",   "#FFF176"),
@@ -79,14 +90,13 @@ class OptionsPanel(QWidget):
         ("charcoal", "#4A4A4A"),
     ]
 
-    def __init__(self, current_theme: str, always_on_top: bool, parent=None):
+    def __init__(self, current_theme: str, parent=None):
         super().__init__(
             parent,
             Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint,
         )
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._current_theme = current_theme
-        self._always_on_top = always_on_top
         self._setup_ui()
         self._apply_panel_style()
 
@@ -107,7 +117,7 @@ class OptionsPanel(QWidget):
                     background-color: {color};
                     border-radius: 14px;
                     color: {tick_color};
-                    font-size: 12px;
+                    font-size: 9pt;
                     border: none;
                 }}
                 QPushButton:hover {{
@@ -124,12 +134,6 @@ class OptionsPanel(QWidget):
         delete_btn.clicked.connect(self.deleteRequested.emit)
         layout.addWidget(delete_btn)
 
-        self._aot_btn = QPushButton()
-        self._aot_btn.setStyleSheet(self._action_btn_style("#333333"))
-        self._aot_btn.clicked.connect(self._toggle_aot)
-        layout.addWidget(self._aot_btn)
-        self._refresh_aot_label()
-
         self.setFixedWidth(220)
 
     @staticmethod
@@ -141,22 +145,13 @@ class OptionsPanel(QWidget):
                 border: none;
                 text-align: left;
                 padding: 4px 8px;
-                font-size: 13px;
+                font-size: 10pt;
             }}
             QPushButton:hover {{
                 background-color: #f0f0f0;
                 border-radius: 4px;
             }}
         """
-
-    def _refresh_aot_label(self):
-        suffix = "  ✓" if self._always_on_top else ""
-        self._aot_btn.setText(f"📌  Always on Top{suffix}")
-
-    def _toggle_aot(self):
-        self._always_on_top = not self._always_on_top
-        self._refresh_aot_label()
-        self.alwaysOnTopToggled.emit(self._always_on_top)
 
     def _apply_panel_style(self):
         self.setStyleSheet("QWidget { background-color: #ffffff; border-radius: 8px; }")
@@ -178,6 +173,18 @@ class DragHandle(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # Title label — auto-derived from the first non-empty line of content.
+        # Transparent to mouse events so drag/double-click still go to DragHandle.
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(0)
+        self.title_label = QLabel("")
+        self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.title_label.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+        )
+        layout.addWidget(self.title_label)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -220,8 +227,11 @@ class TitleBar(QWidget):
         self.opts_btn.clicked.connect(self.optionsRequested.emit)
         layout.addWidget(self.opts_btn)
 
-    def apply_colors(self, title_bg: str):
-        """Restyle title bar and its buttons with the given background color."""
+    def apply_colors(self, title_bg: str, btn_color: str = "#555555",
+                     hover_overlay: str = "rgba(0, 0, 0, 0.12)"):
+        """Restyle title bar and its buttons with the given colors."""
+        self._title_bg = title_bg
+        self._btn_color = btn_color
         self.setStyleSheet(f"""
             QWidget#titleBar {{
                 background-color: {title_bg};
@@ -234,15 +244,153 @@ class TitleBar(QWidget):
                 background-color: transparent;
                 border: none;
                 border-radius: 4px;
-                color: #555555;
+                color: {btn_color};
             }}
             QPushButton:hover {{
-                background-color: rgba(0, 0, 0, 0.12);
+                background-color: {hover_overlay};
             }}
         """
-        self.add_btn.setStyleSheet(btn_style + "QPushButton { font-size: 18px; }")
-        self.opts_btn.setStyleSheet(btn_style + "QPushButton { font-size: 11px; }")
-        self.drag_handle.setStyleSheet(f"background-color: {title_bg};")
+        self.add_btn.setStyleSheet(btn_style + "QPushButton { font-size: 16pt; }")
+        self.opts_btn.setStyleSheet(btn_style + "QPushButton { font-size: 10pt; }")
+        # Drag handle background; title label inherits theme color
+        self.drag_handle.setStyleSheet(
+            f"background-color: {title_bg};"
+        )
+        self.drag_handle.title_label.setStyleSheet(
+            f"color: {btn_color}; background-color: transparent; "
+            f"font-size: 10pt; font-weight: 600;"
+        )
+
+    def set_title_text(self, text: str):
+        """Set (and elide) the auto-derived title displayed in the drag handle."""
+        self._full_title = text
+        label = self.drag_handle.title_label
+        avail = max(20, label.width() - 12)
+        from PyQt6.QtGui import QFontMetrics
+        metrics = QFontMetrics(label.font())
+        label.setText(metrics.elidedText(text, Qt.TextElideMode.ElideRight, avail))
+        label.setToolTip(text if text else "")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Re-elide the title for the new available width
+        if hasattr(self, "_full_title"):
+            self.set_title_text(self._full_title)
+
+
+# ---------------------------------------------------------------------------
+# FormatBar — bottom strip: [B] [I] [U] [S] [•]
+# ---------------------------------------------------------------------------
+class FormatBar(QWidget):
+    boldClicked      = pyqtSignal()
+    italicClicked    = pyqtSignal()
+    underlineClicked = pyqtSignal()
+    strikeClicked    = pyqtSignal()
+    bulletClicked    = pyqtSignal()
+
+    # Defaults — buttons scale around these via apply_size()
+    BTN_MIN, BTN_DEFAULT, BTN_MAX = 24, 30, 44
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("formatBar")
+        self._btn_size = self.BTN_DEFAULT
+        self._last_colors = None    # remembered for re-apply after resize
+        self._setup_ui()
+        self.apply_size(self.BTN_DEFAULT)
+
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setSpacing(3)
+
+        self.bold_btn      = self._make_btn("B", "boldBtn")
+        self.italic_btn    = self._make_btn("I", "italicBtn")
+        self.underline_btn = self._make_btn("U", "underlineBtn")
+        self.strike_btn    = self._make_btn("S", "strikeBtn")
+        # Bullet button uses a painted icon (set in apply_colors); empty text
+        self.bullet_btn    = self._make_btn("", "bulletBtn")
+
+        for btn in self._buttons():
+            layout.addWidget(btn)
+        layout.addStretch()
+
+        self.bold_btn.clicked.connect(self.boldClicked.emit)
+        self.italic_btn.clicked.connect(self.italicClicked.emit)
+        self.underline_btn.clicked.connect(self.underlineClicked.emit)
+        self.strike_btn.clicked.connect(self.strikeClicked.emit)
+        self.bullet_btn.clicked.connect(self.bulletClicked.emit)
+
+    def _buttons(self):
+        return (self.bold_btn, self.italic_btn, self.underline_btn,
+                self.strike_btn, self.bullet_btn)
+
+    @staticmethod
+    def _make_btn(label: str, name: str) -> QPushButton:
+        btn = QPushButton(label)
+        btn.setObjectName(name)
+        btn.setCheckable(True)
+        # Don't steal keyboard focus from QTextEdit; otherwise pressing a
+        # button shifts focus and Ctrl+B/I/U shortcuts stop working.
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        return btn
+
+    def apply_size(self, btn_size: int):
+        """Resize all toolbar buttons. Called by StickyNote on resize so
+        buttons grow proportionally with the note width."""
+        btn_size = max(self.BTN_MIN, min(self.BTN_MAX, int(btn_size)))
+        if btn_size == self._btn_size:
+            return
+        self._btn_size = btn_size
+        # Bar height = button height + small vertical padding
+        self.setFixedHeight(btn_size + 6)
+        for btn in self._buttons():
+            btn.setFixedSize(btn_size, btn_size)
+        # Re-apply theme so font sizes inside the stylesheet pick up the new size
+        if self._last_colors is not None:
+            self.apply_colors(*self._last_colors)
+
+    def apply_colors(self, bg_color: str, btn_color: str, hover_overlay: str,
+                     active_overlay: str):
+        """Restyle bar and buttons. active_overlay = checked-state background."""
+        self._last_colors = (bg_color, btn_color, hover_overlay, active_overlay)
+
+        # Font sizes scale with button size
+        font_px = max(11, int(self._btn_size * 0.45))      # ~13 at btn 30
+        bullet_px = max(15, int(self._btn_size * 0.65))    # ~19 at btn 30
+
+        self.setStyleSheet(f"""
+            QWidget#formatBar {{
+                background-color: {bg_color};
+                border-bottom-left-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }}
+        """)
+        common = f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                border-radius: 4px;
+                color: {btn_color};
+                font-size: {font_px}px;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_overlay};
+            }}
+            QPushButton:checked {{
+                background-color: {active_overlay};
+            }}
+        """
+        # Per-button font styling so each button visually shows its action
+        self.bold_btn.setStyleSheet(common + "QPushButton { font-weight: bold; }")
+        self.italic_btn.setStyleSheet(common + "QPushButton { font-style: italic; }")
+        self.underline_btn.setStyleSheet(common + "QPushButton { text-decoration: underline; }")
+        self.strike_btn.setStyleSheet(common + "QPushButton { text-decoration: line-through; }")
+        self.bullet_btn.setStyleSheet(common)
+        # Painted bullet-list icon, recolored to match the current btn_color
+        icon_px = max(14, int(self._btn_size * 0.7))
+        self.bullet_btn.setIcon(utils.create_bullet_list_icon(btn_color, icon_px))
+        self.bullet_btn.setIconSize(QSize(icon_px, icon_px))
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +406,6 @@ class StickyNote(QWidget):
         content="",
         geometry_data=None,
         theme=config.DEFAULT_THEME,
-        always_on_top=False,
         collapsed=False,
         parent=None,
     ):
@@ -266,9 +413,11 @@ class StickyNote(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self.note_id = note_id or str(uuid.uuid4())
+        # Stable window title. Mutter (and other Wayland compositors) use
+        # this together with app_id to track per-window placement memory.
+        self.setWindowTitle("Sticky Note")
         self._is_being_deleted = False
         self._theme_name = theme
-        self._always_on_top = always_on_top
         self._is_collapsed = False
         self._pre_collapse_height = 250
         self._options_panel = None
@@ -285,6 +434,13 @@ class StickyNote(QWidget):
         self._drag_start_global = None
         self._drag_start_window_pos = None
 
+        # Debounced save — fires 500ms after the last move/resize so we
+        # never lose position even if the user quits abruptly.
+        self._save_debounce = QTimer(self)
+        self._save_debounce.setSingleShot(True)
+        self._save_debounce.setInterval(500)
+        self._save_debounce.timeout.connect(self._save)
+
         self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
         self._setup_ui()
         self._setup_shortcuts()
@@ -295,13 +451,29 @@ class StickyNote(QWidget):
 
         self._apply_theme(utils.get_theme(theme))
 
-        if always_on_top:
-            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-
-        if geometry_data:
+        # geometry_data: prefer Qt's QByteArray from saveGeometry — its
+        # internal restoreGeometry path is the one Wayland compositors honor
+        # at window mapping. The (x, y, w, h) tuple branch only exists to
+        # migrate notes saved during the broken intermediate version.
+        if isinstance(geometry_data, tuple) and len(geometry_data) == 4:
+            x, y, w, h = geometry_data
+            self.resize(w, h)
+            self.move(x, y)
+        elif geometry_data:
+            # Some QSettings backends (INI on certain platforms) roundtrip
+            # QByteArray as str/bytes. Coerce so restoreGeometry works.
+            if isinstance(geometry_data, str):
+                geometry_data = QByteArray(geometry_data.encode("latin-1"))
+            elif isinstance(geometry_data, (bytes, bytearray)):
+                geometry_data = QByteArray(bytes(geometry_data))
             self.restoreGeometry(geometry_data)
         else:
-            self.resize(250, 250)
+            # Default size scales with the user's screen so notes don't look
+            # tiny on 1440p/4K or oversized on small laptops.
+            screen = QApplication.primaryScreen().availableGeometry()
+            default_w = max(280, min(480, screen.width() // 8))
+            default_h = max(280, min(480, screen.height() // 6))
+            self.resize(default_w, default_h)
 
         # Install event filter on children after UI is built
         for child in self.findChildren(QWidget):
@@ -314,6 +486,8 @@ class StickyNote(QWidget):
                 self.text_edit.setHtml(content)
             else:
                 self.text_edit.setPlainText(content)
+        # Initial title (also covers the empty-content "New note" case)
+        self._refresh_title()
 
         if collapsed:
             QTimer.singleShot(0, self._collapse_immediately)
@@ -323,8 +497,12 @@ class StickyNote(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_ui(self):
+        # Margins around bg_widget give the drop shadow room to render —
+        # without them the shadow gets clipped at the window edge and you
+        # can't tell stacked notes apart.
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        g = config.SHADOW_GUTTER
+        outer.setContentsMargins(g, g, g, g)
         outer.setSpacing(0)
 
         self.bg_widget = QWidget(self)
@@ -348,20 +526,45 @@ class StickyNote(QWidget):
         self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         bg_layout.addWidget(self.text_edit)
 
+        self.format_bar = FormatBar(self.bg_widget)
+        self.format_bar.boldClicked.connect(self._toggle_bold)
+        self.format_bar.italicClicked.connect(self._toggle_italic)
+        self.format_bar.underlineClicked.connect(self._toggle_underline)
+        self.format_bar.strikeClicked.connect(self._toggle_strike)
+        self.format_bar.bulletClicked.connect(self._toggle_bullet_list)
+        bg_layout.addWidget(self.format_bar)
+
+        # Reflect cursor's current formatting in the toolbar's checked state.
+        self.text_edit.cursorPositionChanged.connect(self._refresh_format_bar)
+        self.text_edit.currentCharFormatChanged.connect(
+            lambda _fmt: self._refresh_format_bar()
+        )
+        # Auto-derive title from first non-empty line of content
+        self.text_edit.textChanged.connect(self._refresh_title)
+
         outer.addWidget(self.bg_widget)
 
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 80))
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 5)
+        shadow.setColor(QColor(0, 0, 0, 130))
         self.bg_widget.setGraphicsEffect(shadow)
 
     def _setup_shortcuts(self):
-        # Ctrl+B/I/U are handled natively by QTextEdit in rich-text mode.
-        # Only the bullet toggle needs explicit wiring.
-        sc = QShortcut(QKeySequence("Ctrl+Shift+L"), self.text_edit)
-        sc.setContext(Qt.ShortcutContext.WidgetShortcut)
-        sc.activated.connect(self._toggle_bullet_list)
+        # QTextEdit doesn't bind Ctrl+B/I/U on its own — wire them explicitly.
+        # WidgetWithChildrenShortcut so the shortcut still fires if a child
+        # widget (e.g. scroll bar) momentarily holds focus.
+        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        for keys, slot in (
+            ("Ctrl+B",       self._toggle_bold),
+            ("Ctrl+I",       self._toggle_italic),
+            ("Ctrl+U",       self._toggle_underline),
+            ("Ctrl+Shift+S", self._toggle_strike),
+            ("Ctrl+Shift+L", self._toggle_bullet_list),
+        ):
+            sc = QShortcut(QKeySequence(keys), self.text_edit)
+            sc.setContext(ctx)
+            sc.activated.connect(slot)
 
     def _setup_autosave(self):
         self._autosave_timer = QTimer(self)
@@ -378,13 +581,21 @@ class StickyNote(QWidget):
         title_bg = theme["title"]
         text_color = theme["text"]
 
+        # Dark themes (charcoal) use light text — title-bar buttons need a
+        # light tint and a light hover overlay to be visible.
+        is_dark = text_color == "#f0f0f0"
+        btn_color = "#cccccc" if is_dark else "#555555"
+        hover_overlay = "rgba(255, 255, 255, 0.18)" if is_dark else "rgba(0, 0, 0, 0.12)"
+        active_overlay = "rgba(255, 255, 255, 0.28)" if is_dark else "rgba(0, 0, 0, 0.20)"
+
         self.bg_widget.setStyleSheet(f"""
             QWidget#noteBackground {{
                 background-color: {bg};
                 border-radius: 8px;
             }}
         """)
-        self.title_bar.apply_colors(title_bg)
+        self.title_bar.apply_colors(title_bg, btn_color, hover_overlay)
+        self.format_bar.apply_colors(title_bg, btn_color, hover_overlay, active_overlay)
         self.text_edit.setStyleSheet(f"""
             NoteTextEdit {{
                 background-color: transparent;
@@ -409,10 +620,9 @@ class StickyNote(QWidget):
             self._options_panel = None
             return
 
-        panel = OptionsPanel(self._theme_name, self._always_on_top)
+        panel = OptionsPanel(self._theme_name)
         panel.themeSelected.connect(self._change_theme)
         panel.deleteRequested.connect(self._handle_delete)
-        panel.alwaysOnTopToggled.connect(self._set_always_on_top)
         panel.destroyed.connect(lambda: setattr(self, "_options_panel", None))
 
         # Position: below and right-aligned to the "..." button
@@ -428,12 +638,6 @@ class StickyNote(QWidget):
         self._theme_name = theme_name
         self._apply_theme(utils.get_theme(theme_name))
         self._options_panel = None
-        self._save()
-
-    def _set_always_on_top(self, enabled: bool):
-        self._always_on_top = enabled
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
-        self.show()     # required to re-apply window flags
         self._save()
 
     # ------------------------------------------------------------------
@@ -462,16 +666,24 @@ class StickyNote(QWidget):
         # Allow window to shrink below its normal minimum
         self.setMinimumHeight(0)
 
+        # Window must accommodate the title bar plus the top/bottom
+        # shadow gutters; otherwise the gutters consume all the height
+        # and the title bar is clipped.
+        collapsed_h = config.TITLE_BAR_HEIGHT + 2 * config.SHADOW_GUTTER
+
         group = QParallelAnimationGroup(self)
         for prop in (b"minimumHeight", b"maximumHeight"):
             anim = QPropertyAnimation(self, prop)
             anim.setDuration(config.COLLAPSE_ANIMATION_MS)
             anim.setEasingCurve(QEasingCurve.Type.OutCubic)
             anim.setStartValue(self.height())
-            anim.setEndValue(config.TITLE_BAR_HEIGHT)
+            anim.setEndValue(collapsed_h)
             group.addAnimation(anim)
 
-        group.finished.connect(self.text_edit.hide)
+        def _hide_body():
+            self.text_edit.hide()
+            self.format_bar.hide()
+        group.finished.connect(_hide_body)
         group.start()
         self._anim_group = group    # prevent GC
 
@@ -480,6 +692,7 @@ class StickyNote(QWidget):
         target_h = max(self._pre_collapse_height, config.MIN_NOTE_HEIGHT)
 
         self.text_edit.show()
+        self.format_bar.show()
 
         group = QParallelAnimationGroup(self)
         for prop in (b"minimumHeight", b"maximumHeight"):
@@ -500,15 +713,38 @@ class StickyNote(QWidget):
 
     def _collapse_immediately(self):
         """Apply collapsed state on load without animation."""
+        collapsed_h = config.TITLE_BAR_HEIGHT + 2 * config.SHADOW_GUTTER
         self._is_collapsed = True
         self.text_edit.hide()
+        self.format_bar.hide()
         self.setMinimumHeight(0)
-        self.setMaximumHeight(config.TITLE_BAR_HEIGHT)
-        self.resize(self.width(), config.TITLE_BAR_HEIGHT)
+        self.setMaximumHeight(collapsed_h)
+        self.resize(self.width(), collapsed_h)
 
     # ------------------------------------------------------------------
     # Bullet list toggle
     # ------------------------------------------------------------------
+
+    def _toggle_bold(self):
+        fmt = self.text_edit.currentCharFormat()
+        is_bold = fmt.fontWeight() == QFont.Weight.Bold
+        fmt.setFontWeight(QFont.Weight.Normal if is_bold else QFont.Weight.Bold)
+        self.text_edit.mergeCurrentCharFormat(fmt)
+
+    def _toggle_italic(self):
+        fmt = self.text_edit.currentCharFormat()
+        fmt.setFontItalic(not fmt.fontItalic())
+        self.text_edit.mergeCurrentCharFormat(fmt)
+
+    def _toggle_underline(self):
+        fmt = self.text_edit.currentCharFormat()
+        fmt.setFontUnderline(not fmt.fontUnderline())
+        self.text_edit.mergeCurrentCharFormat(fmt)
+
+    def _toggle_strike(self):
+        fmt = self.text_edit.currentCharFormat()
+        fmt.setFontStrikeOut(not fmt.fontStrikeOut())
+        self.text_edit.mergeCurrentCharFormat(fmt)
 
     def _toggle_bullet_list(self):
         cursor = self.text_edit.textCursor()
@@ -519,6 +755,26 @@ class StickyNote(QWidget):
             list_fmt.setStyle(QTextListFormat.Style.ListDisc)
             list_fmt.setIndent(1)
             cursor.createList(list_fmt)
+        self._refresh_format_bar()
+
+    def _refresh_format_bar(self):
+        """Sync FormatBar checked state with the cursor's current formatting."""
+        fmt = self.text_edit.currentCharFormat()
+        cursor = self.text_edit.textCursor()
+        self.format_bar.bold_btn.setChecked(fmt.fontWeight() == QFont.Weight.Bold)
+        self.format_bar.italic_btn.setChecked(fmt.fontItalic())
+        self.format_bar.underline_btn.setChecked(fmt.fontUnderline())
+        self.format_bar.strike_btn.setChecked(fmt.fontStrikeOut())
+        self.format_bar.bullet_btn.setChecked(cursor.currentList() is not None)
+
+    def _refresh_title(self):
+        """Set the title-bar label from the first non-empty line of content."""
+        text = self.text_edit.toPlainText()
+        first = next(
+            (line.strip() for line in text.splitlines() if line.strip()),
+            "New note",
+        )
+        self.title_bar.set_title_text(first)
 
     def _remove_list(self, cursor: QTextCursor):
         start = cursor.selectionStart()
@@ -559,57 +815,124 @@ class StickyNote(QWidget):
         if right:  return _E
         return _NONE
 
+    # ---- Mouse dispatch helpers (used by both eventFilter and self overrides)
+
+    def _try_start_resize(self, gpos: QPoint) -> bool:
+        """If gpos is in a resize zone, start a resize and return True."""
+        zone = self._get_resize_zone(self.mapFromGlobal(gpos))
+        if zone == _NONE:
+            return False
+        # Native WM resize is the most reliable on Linux — it handles
+        # the geometry math correctly for all four edges (the manual
+        # fallback gets the top-edge case wrong on some compositors).
+        wh = self.windowHandle()
+        if wh is not None and wh.startSystemResize(_EDGES[zone]):
+            return True
+        # Fallback: manual resize (edges only — corners get top wrong)
+        self._is_resizing = True
+        self._resize_zone = zone
+        self._resize_start_global = gpos
+        self._resize_start_geo = self.geometry()
+        self.setCursor(_CURSORS[zone])
+        return True
+
+    def _try_start_drag(self, gpos: QPoint, obj) -> bool:
+        """If pressed on a DragHandle, start a drag and return True."""
+        if not isinstance(obj, DragHandle):
+            return False
+        wh = self.windowHandle()
+        if wh is not None and wh.startSystemMove():
+            return True
+        self._is_dragging = True
+        self._drag_start_global = gpos
+        self._drag_start_window_pos = self.pos()
+        return True
+
+    def _handle_mouse_move(self, gpos: QPoint) -> bool:
+        if self._is_resizing:
+            self._do_resize(gpos)
+            return True
+        if self._is_dragging:
+            delta = gpos - self._drag_start_global
+            self.move(self._drag_start_window_pos + delta)
+            return True
+        # Hover: update cursor to indicate resize affordance
+        zone = self._get_resize_zone(self.mapFromGlobal(gpos))
+        if zone != _NONE:
+            self.setCursor(_CURSORS[zone])
+        else:
+            self.unsetCursor()
+        return False
+
+    def _handle_mouse_release(self) -> bool:
+        if self._is_resizing:
+            self._is_resizing = False
+            self._resize_zone = _NONE
+            self.unsetCursor()
+            return True
+        if self._is_dragging:
+            self._is_dragging = False
+            return True
+        return False
+
     def eventFilter(self, obj, event):
         t = event.type()
-
-        if t == QEvent.Type.MouseButtonPress:
+        if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
             gpos = event.globalPosition().toPoint()
-            zone = self._get_resize_zone(self.mapFromGlobal(gpos))
-            if zone != _NONE:
-                self._is_resizing = True
-                self._resize_zone = zone
-                self._resize_start_global = gpos
-                self._resize_start_geo = self.geometry()
-                self.setCursor(_CURSORS[zone])
+            if self._try_start_resize(gpos):
                 return True
-            # Drag — initiated by pressing on the DragHandle spacer.
-            # Prefer the native WM move protocol (QWindow.startSystemMove);
-            # it integrates with the compositor on X11/Wayland and avoids
-            # the unreliable mouse-grab behavior we get when the event
-            # filter consumes the press event for a child widget.
-            if isinstance(obj, DragHandle) and event.button() == Qt.MouseButton.LeftButton:
-                wh = self.windowHandle()
-                if wh is not None and wh.startSystemMove():
-                    return True
-                # Fallback for platforms where startSystemMove returns False
-                self._is_dragging = True
-                self._drag_start_global = gpos
-                self._drag_start_window_pos = self.pos()
+            if self._try_start_drag(gpos, obj):
                 return True
-
         elif t == QEvent.Type.MouseMove:
-            gpos = event.globalPosition().toPoint()
-            if self._is_resizing:
-                self._do_resize(gpos)
+            if self._handle_mouse_move(event.globalPosition().toPoint()):
                 return True
-            if self._is_dragging:
-                delta = gpos - self._drag_start_global
-                self.move(self._drag_start_window_pos + delta)
-                return True
-            zone = self._get_resize_zone(self.mapFromGlobal(gpos))
-            self.setCursor(_CURSORS[zone]) if zone != _NONE else self.unsetCursor()
-
         elif t == QEvent.Type.MouseButtonRelease:
-            if self._is_resizing:
-                self._is_resizing = False
-                self._resize_zone = _NONE
-                self.unsetCursor()
+            if self._handle_mouse_release():
                 return True
-            if self._is_dragging:
-                self._is_dragging = False
-                return True
-
         return super().eventFilter(obj, event)
+
+    # ---- Mouse events on StickyNote itself (the shadow gutter region).
+    # Children get events through the eventFilter above; the gutter is
+    # not covered by any child, so events land here directly.
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._try_start_resize(event.globalPosition().toPoint()):
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._handle_mouse_move(event.globalPosition().toPoint()):
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._handle_mouse_release():
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    # ---- Window lifecycle: persistence on move/resize, format-bar scaling
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        # Save position shortly after the user finishes moving the window.
+        # Debouncing avoids hammering QSettings during a drag.
+        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
+            self._save_debounce.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Scale format-bar buttons proportionally to note width
+        if hasattr(self, "format_bar"):
+            # 30px buttons at ~280px window; clamped by FormatBar to [24, 44]
+            btn = int(self.width() / 9.5)
+            self.format_bar.apply_size(btn)
+        # Save size after the user finishes resizing
+        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
+            self._save_debounce.start()
 
     def _do_resize(self, gpos: QPoint):
         dx = gpos.x() - self._resize_start_global.x()
@@ -638,11 +961,13 @@ class StickyNote(QWidget):
             return
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
-        settings.setValue(f"{self.note_id}/content",      self.text_edit.toHtml())
-        settings.setValue(f"{self.note_id}/geometry",     self.saveGeometry())
-        settings.setValue(f"{self.note_id}/theme",        self._theme_name)
-        settings.setValue(f"{self.note_id}/always_on_top", self._always_on_top)
-        settings.setValue(f"{self.note_id}/collapsed",    self._is_collapsed)
+        settings.setValue(f"{self.note_id}/content",   self.text_edit.toHtml())
+        # Use Qt's encoded geometry — this is the path Wayland compositors
+        # honor at window mapping. Manual x/y/w/h via move() doesn't work
+        # because Wayland forbids apps from positioning themselves.
+        settings.setValue(f"{self.note_id}/geometry",  self.saveGeometry())
+        settings.setValue(f"{self.note_id}/theme",     self._theme_name)
+        settings.setValue(f"{self.note_id}/collapsed", self._is_collapsed)
         settings.endGroup()
 
     def closeEvent(self, event):

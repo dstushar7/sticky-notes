@@ -14,7 +14,8 @@ THEMES = {
 }
 DEFAULT_THEME = "yellow"
 TITLE_BAR_HEIGHT = 32
-RESIZE_ZONE = 8
+SHADOW_GUTTER = 12          # transparent margin for the drop shadow
+RESIZE_ZONE = 16            # >= SHADOW_GUTTER so resize grip reaches the visible note edge
 MIN_NOTE_WIDTH = 160
 MIN_NOTE_HEIGHT = 160
 AUTOSAVE_INTERVAL_MS = 5000

@@ -16,12 +16,19 @@ class TrayManager:
         self.open_notes = {}
 
         self.app.setQuitOnLastWindowClosed(False)
+        # app.quit() does not call closeEvent on individual windows, so any
+        # unsaved position/size would be lost. Flush every note before exit.
+        self.app.aboutToQuit.connect(self._save_all_notes)
 
         self._setup_tray_icon()
         self._load_notes()
 
         if not self.open_notes:
             self._create_new_note()
+
+    def _save_all_notes(self):
+        for note in self.open_notes.values():
+            note._save()
 
     def _setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(utils.create_tray_icon(), parent=self.app)
@@ -52,11 +59,10 @@ class TrayManager:
         content="",
         geometry_data=None,
         theme=None,
-        always_on_top=False,
         collapsed=False,
     ):
         theme = theme or config.DEFAULT_THEME
-        note = StickyNote(note_id, content, geometry_data, theme, always_on_top, collapsed)
+        note = StickyNote(note_id, content, geometry_data, theme, collapsed)
         note.noteDeleted.connect(self._handle_note_deletion)
         note.newNoteRequested.connect(self._new_note_from_signal)
         note.show()
@@ -88,10 +94,21 @@ class TrayManager:
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
         for note_id in settings.childGroups():
-            content      = settings.value(f"{note_id}/content", "")
-            geometry     = settings.value(f"{note_id}/geometry")
-            theme        = settings.value(f"{note_id}/theme", config.DEFAULT_THEME)
-            always_on_top = settings.value(f"{note_id}/always_on_top", False, type=bool)
-            collapsed    = settings.value(f"{note_id}/collapsed", False, type=bool)
-            self._create_new_note(note_id, content, geometry, theme, always_on_top, collapsed)
+            content   = settings.value(f"{note_id}/content", "")
+            theme     = settings.value(f"{note_id}/theme", config.DEFAULT_THEME)
+            collapsed = settings.value(f"{note_id}/collapsed", False, type=bool)
+
+            # Prefer the QByteArray-encoded geometry (works on Wayland).
+            # Fall back to (x, y, w, h) ints for notes saved during the
+            # broken intermediate version where we wrote raw coords only.
+            geometry = settings.value(f"{note_id}/geometry")
+            if geometry is None:
+                x = settings.value(f"{note_id}/x")
+                y = settings.value(f"{note_id}/y")
+                w = settings.value(f"{note_id}/w")
+                h = settings.value(f"{note_id}/h")
+                if None not in (x, y, w, h):
+                    geometry = (int(x), int(y), int(w), int(h))
+
+            self._create_new_note(note_id, content, geometry, theme, collapsed)
         settings.endGroup()
