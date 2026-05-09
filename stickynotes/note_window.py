@@ -79,6 +79,9 @@ class NoteTextEdit(QTextEdit):
 class OptionsPanel(QWidget):
     themeSelected = pyqtSignal(str)
     deleteRequested = pyqtSignal()
+    # Emitted on every dismissal (outside click, explicit close, theme pick).
+    # Carries self so the owner can verify identity before clearing its ref.
+    dismissed = pyqtSignal(object)
 
     _SWATCHES = [
         ("yellow",   "#FFF176"),
@@ -96,9 +99,20 @@ class OptionsPanel(QWidget):
             Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint,
         )
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._dismissed = False
         self._current_theme = current_theme
         self._setup_ui()
         self._apply_panel_style()
+
+    def hideEvent(self, event):
+        # Popup auto-dismisses on outside click via hide(), not close(), so
+        # WA_DeleteOnClose alone wouldn't free the widget. Emit + deleteLater
+        # here covers every dismissal path.
+        super().hideEvent(event)
+        if not self._dismissed:
+            self._dismissed = True
+            self.dismissed.emit(self)
+            self.deleteLater()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -616,14 +630,13 @@ class StickyNote(QWidget):
     def _show_options_panel(self):
         # Toggle: if already open, close it
         if self._options_panel is not None:
-            self._options_panel.close()
-            self._options_panel = None
+            self._close_options_panel()
             return
 
         panel = OptionsPanel(self._theme_name)
         panel.themeSelected.connect(self._change_theme)
         panel.deleteRequested.connect(self._handle_delete)
-        panel.destroyed.connect(lambda: setattr(self, "_options_panel", None))
+        panel.dismissed.connect(self._on_panel_dismissed)
 
         # Position: below and right-aligned to the "..." button
         btn = self.title_bar.opts_btn
@@ -634,10 +647,25 @@ class StickyNote(QWidget):
         panel.show()
         self._options_panel = panel
 
+    def _close_options_panel(self):
+        """Close the panel if open, clearing the reference synchronously so a
+        rapid re-open creates a fresh panel instead of toggling the old one."""
+        if self._options_panel is not None:
+            old = self._options_panel
+            self._options_panel = None
+            old.close()
+
+    def _on_panel_dismissed(self, panel):
+        # Identity check guards against a delayed dismissed signal arriving
+        # after the user opened a new panel (which would otherwise wipe the
+        # new reference).
+        if self._options_panel is panel:
+            self._options_panel = None
+
     def _change_theme(self, theme_name: str):
         self._theme_name = theme_name
         self._apply_theme(utils.get_theme(theme_name))
-        self._options_panel = None
+        self._close_options_panel()
         self._save()
 
     # ------------------------------------------------------------------
@@ -645,9 +673,13 @@ class StickyNote(QWidget):
     # ------------------------------------------------------------------
 
     def _handle_delete(self):
+        self._close_options_panel()
         self._is_being_deleted = True
         self.noteDeleted.emit(self.note_id)
         self.close()
+        # Free the C++ widget too — close() alone only hides it, leaking
+        # shortcuts, timers, and child event-filter installations.
+        self.deleteLater()
 
     # ------------------------------------------------------------------
     # Collapse / expand
