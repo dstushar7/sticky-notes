@@ -572,8 +572,16 @@ class StickyNote(QWidget):
                 self._resize_start_geo = self.geometry()
                 self.setCursor(_CURSORS[zone])
                 return True
-            # Drag — initiated by pressing on the DragHandle spacer
+            # Drag — initiated by pressing on the DragHandle spacer.
+            # Prefer the native WM move protocol (QWindow.startSystemMove);
+            # it integrates with the compositor on X11/Wayland and avoids
+            # the unreliable mouse-grab behavior we get when the event
+            # filter consumes the press event for a child widget.
             if isinstance(obj, DragHandle) and event.button() == Qt.MouseButton.LeftButton:
+                wh = self.windowHandle()
+                if wh is not None and wh.startSystemMove():
+                    return True
+                # Fallback for platforms where startSystemMove returns False
                 self._is_dragging = True
                 self._drag_start_global = gpos
                 self._drag_start_window_pos = self.pos()
