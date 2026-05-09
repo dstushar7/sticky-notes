@@ -36,17 +36,17 @@ class TrayManager:
 
         self.menu = QMenu()
 
-        new_note_action = QAction("📝  New Note", parent=self.tray_icon)
+        new_note_action = QAction("New Note", parent=self.tray_icon)
         new_note_action.triggered.connect(self._create_new_note)
         self.menu.addAction(new_note_action)
 
-        show_all_action = QAction("👁️  Show All Notes", parent=self.tray_icon)
+        show_all_action = QAction("Show All Notes", parent=self.tray_icon)
         show_all_action.triggered.connect(self._show_all_notes)
         self.menu.addAction(show_all_action)
 
         self.menu.addSeparator()
 
-        quit_action = QAction("❌  Quit", parent=self.tray_icon)
+        quit_action = QAction("Quit", parent=self.tray_icon)
         quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(quit_action)
 
