@@ -5,29 +5,31 @@
 ![PyQt6](https://img.shields.io/badge/PyQt6-GUI-green)
 ![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
 
-A simple and elegant desktop **Sticky Notes** app built with **Python** and **PyQt6**.  
-Quickly jot down thoughts, ideas, and reminders — right on your desktop.  
-Notes are automatically saved and restored between sessions.
+A desktop **Sticky Notes** app built with **Python** and **PyQt6**, styled to match the look and feel of **Windows 11 Sticky Notes** — running natively on Linux.  
+Jot down thoughts, ideas, and reminders right on your desktop with rich text, color themes, and a clean frameless UI.  
+Notes are automatically saved and fully restored between sessions.
 
 ---
 
 ## 🚀 Features
 
-- 🖊️ Create multiple sticky notes effortlessly  
-- 💾 Auto-saves note content and position between sessions  
-- 🎨 Light, clean, and distraction-free design  
-- 🧩 System tray integration for quick access  
-- 👁️ “Show All Notes” support to quickly bring all notes to front  
-- 🌈 Theme-ready color architecture (Light & Dark support coming soon!)  
-- 🟢 Packaged as a **Snap app** for easy Linux installation  
+- 🖊️ Create multiple sticky notes effortlessly via the `+` button or tray menu
+- 💾 Auto-saves note content, position, size, theme, and state every 5 seconds
+- 🎨 **7 color themes** — Yellow, Green, Pink, Purple, Blue, Gray, Charcoal
+- ✍️ **Rich text formatting** — Bold (`Ctrl+B`), Italic (`Ctrl+I`), Underline (`Ctrl+U`)
+- 📋 **Bullet lists** — Toggle with `Ctrl+Shift+L`; `Enter` continues the list, `Shift+Enter` breaks out
+- 📌 **Always-on-top** toggle — per note, persisted across sessions
+- 🪄 **Collapse / expand** — double-click the title bar to collapse a note to just its header
+- 🖱️ **Resizable from all 8 edges and corners** — no OS chrome needed
+- 🧩 System tray integration for quick access
+- 👁️ "Show All Notes" support to bring all notes to the front
+- 🟢 Packaged as a **Snap app** for easy Linux installation
 
 ---
 
 ## ⚙️ Installation
 
 ### 🧩 Option 1 – From the Snap Store (Recommended)
-
-Once published, you’ll be able to install it directly from the Ubuntu Software Center or via terminal:
 
 ```bash
 sudo snap install sticky-notes
@@ -47,8 +49,8 @@ sudo snap install sticky-notes
 2. Create a virtual environment and install dependencies:
 
     ```bash
-    python3 -m venv venv
-    source venv/bin/activate
+    python3 -m venv stickyenv
+    source stickyenv/bin/activate
     pip install -r requirements.txt
     ```
 
@@ -62,18 +64,54 @@ sudo snap install sticky-notes
 
 ## 🏃 Usage
 
-Once launched, a sticky notes icon 🗒️ appears in your **system tray**.  
+Once launched, a sticky notes icon appears in your **system tray**.  
 Right-click the tray icon to:
 
-- 📝 **Create New Note**
-- 👁️ **Show All Notes**
+- 📝 **New Note** — creates a note in the default Yellow theme
+- 👁️ **Show All Notes** — brings every note to the front
 - ❌ **Quit the Application**
 
-Within each note:
-- Right-click inside the note to open its quick actions.
-- Choose **📝 New Note** or **🗑️ Delete Note** directly from the context menu.
+### Inside each note
 
-Notes automatically save their text and size — even if you close and reopen the app.
+| Action | How |
+|--------|-----|
+| **New note (same color)** | Click the `+` button in the title bar |
+| **Color / delete / pin** | Click the `•••` button → options panel |
+| **Bold** | `Ctrl+B` |
+| **Italic** | `Ctrl+I` |
+| **Underline** | `Ctrl+U` |
+| **Bullet list on/off** | `Ctrl+Shift+L` |
+| **Continue list item** | `Enter` |
+| **Break out of list** | `Shift+Enter` |
+| **Collapse / expand** | Double-click the title bar spacer |
+| **Drag window** | Click and drag the title bar spacer |
+| **Resize window** | Drag any edge or corner (8 px grab zone) |
+
+---
+
+## 🪟 UI Overview
+
+Each note is a frameless, rounded-corner window with a drop shadow:
+
+```
+┌──────────────────────────────────┐
+│  +    [  drag handle  ]      ••• │  ← title bar (theme color)
+├──────────────────────────────────┤
+│                                  │
+│   Your note text here…           │  ← text area (transparent)
+│                                  │
+└──────────────────────────────────┘
+```
+
+Clicking `•••` opens a floating options panel:
+
+```
+┌─────────────────────────────────┐
+│  🟡  🟢  🩷  🟣  🔵  ⬜  ⬛      │  ← color swatches (circle buttons)
+│  🗑  Delete Note                 │
+│  📌  Always on Top               │
+└─────────────────────────────────┘
+```
 
 ---
 
@@ -87,16 +125,17 @@ sticky-notes/
 │
 ├── stickynotes/             # Main Python package
 │   ├── __init__.py
-│   ├── config.py            # App configuration and theme constants
-│   ├── note_window.py       # Sticky Note window class
-│   ├── tray_manager.py      # Manages tray icon and logic
-│   └── utils.py             # Helper functions (e.g., icon creation)
+│   ├── config.py            # App constants, THEMES dict, sizing constants
+│   ├── note_window.py       # NoteTextEdit, TitleBar, OptionsPanel, StickyNote
+│   ├── tray_manager.py      # Manages tray icon and note lifecycle
+│   └── utils.py             # Icon creation, get_theme(), apply_theme_to_window()
 │
 ├── run_stickynotes.py       # Entry script to launch the app
 ├── requirements.txt         # Dependency list
-├── .gitignore               # Ignored files for version control
-├── LICENSE                  # Open source license
-└── README.md                # Documentation
+├── CHANGES.md               # Session changelog
+├── .gitignore
+├── LICENSE
+└── README.md
 ```
 
 ---
@@ -106,75 +145,69 @@ sticky-notes/
 - 🐍 Python **3.10+**
 - 🪟 PyQt6 **6.5+**
 
-The dependencies are listed in [requirements.txt](./requirements.txt):
-
-```
-PyQt6>=6.5
-```
-
-Install them with:
 ```bash
 pip install -r requirements.txt
 ```
 
 ---
 
+## ⌨️ Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+B` | Bold |
+| `Ctrl+I` | Italic |
+| `Ctrl+U` | Underline |
+| `Ctrl+Shift+L` | Toggle bullet list |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` | Redo |
+| `Ctrl+A` | Select all |
+
+---
+
+## 🎨 Themes
+
+| Name | Background | Title Bar |
+|------|-----------|-----------|
+| Yellow *(default)* | `#FFF176` | `#F9E44A` |
+| Green | `#B5EBBF` | `#8FD9A0` |
+| Pink | `#F9B8C6` | `#F48FAA` |
+| Purple | `#D8B8F9` | `#BC8FF5` |
+| Blue | `#B3E5FC` | `#80D0F5` |
+| Gray | `#E0E0E0` | `#BDBDBD` |
+| Charcoal | `#4A4A4A` | `#333333` |
+
+Charcoal uses light text (`#f0f0f0`); all other themes use dark text (`#1a1a1a`).
+
+---
+
 ## 🧰 Technologies Used
 
-- **[Python 3.10+](https://www.python.org/)**  
-- **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)** for GUI interface  
-- **[Snapcraft](https://snapcraft.io/)** for app packaging and distribution  
+- **[Python 3.10+](https://www.python.org/)**
+- **[PyQt6](https://www.riverbankcomputing.com/software/pyqt/)** for GUI
+- **[Snapcraft](https://snapcraft.io/)** for packaging and distribution
 
 ---
 
 ## 🛠️ Local Development
 
-To contribute or customize:
-
 ```bash
-# Create a new branch for your changes
 git checkout -b feature/your-feature
-
-# After changes
+# make changes
 git add .
-git commit -m "Add new feature"
-
-# Push and open a PR
+git commit -m "feat: describe your change"
 git push origin feature/your-feature
+# open a pull request
 ```
 
-Suggested areas for contribution:
-- 🌈 Add Dark/Light theme switch
-- 🖋️ Text formatting (bold, italics)
-- 📅 Reminder and notification features
-- 📁 Note organization (tags/folders)
-
 ---
-
-<!-- ## 🖼️ Screenshot
-
-*(Optional: replace this placeholder once you capture your app’s look)*
-
-![Screenshot of Sticky Notes](https://via.placeholder.com/800x400?text=Sticky+Notes+App+Preview)
-
--->
 
 ## 📜 License
 
 This project is licensed under the **MIT License**.  
-See the [LICENSE](./LICENSE) file for details.  
+See the [LICENSE](./LICENSE) file for details.
 
 > License © 2025 **Tushar D. (@dstushar7)** — Open for community contributions.
-
----
-
-## 💡 Future Enhancements
-
-- 🌈 Customizable note colors and full theme switching  
-- 📅 Reminder & notification integration  
-- 🔄 Cloud sync across devices  
-- 📁 Folder & tagging support for better organization  
-- 🧰 Optional toolbar actions (font, text size, pinning)  
 
 ---
 
@@ -185,9 +218,4 @@ See the [LICENSE](./LICENSE) file for details.
 
 ---
 
-## 🥳 Final Notes
-
-Sticky Notes is designed to be simple, fast, and reliable —  
-your go‑to place for quick thoughts, todos, and ideas.
-
-**Feedback and pull requests are always welcome — let’s build together!**
+**Feedback and pull requests are always welcome — let's build together!**
