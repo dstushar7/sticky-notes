@@ -168,33 +168,16 @@ class OptionsPanel(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# DragHandle — transparent spacer that drags the window; dbl-click collapses
+# DragHandle — transparent spacer in the title bar.
+# Drag and release are handled by StickyNote.eventFilter so the top-level
+# window calls self.move() directly (more reliable than doing it from a child).
+# Only double-click is handled here because it's a discrete gesture that
+# doesn't need the event-filter machinery.
 # ---------------------------------------------------------------------------
 class DragHandle(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._drag_offset = None
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_offset = (
-                event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
-            )
-            event.accept()
-        else:
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and self._drag_offset is not None:
-            self.window().move(event.globalPosition().toPoint() - self._drag_offset)
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._drag_offset = None
-        super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -296,6 +279,11 @@ class StickyNote(QWidget):
         self._is_resizing = False
         self._resize_start_global = None
         self._resize_start_geo = None
+
+        # Drag tracking
+        self._is_dragging = False
+        self._drag_start_global = None
+        self._drag_start_window_pos = None
 
         self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
         self._setup_ui()
@@ -584,11 +572,21 @@ class StickyNote(QWidget):
                 self._resize_start_geo = self.geometry()
                 self.setCursor(_CURSORS[zone])
                 return True
+            # Drag — initiated by pressing on the DragHandle spacer
+            if isinstance(obj, DragHandle) and event.button() == Qt.MouseButton.LeftButton:
+                self._is_dragging = True
+                self._drag_start_global = gpos
+                self._drag_start_window_pos = self.pos()
+                return True
 
         elif t == QEvent.Type.MouseMove:
             gpos = event.globalPosition().toPoint()
             if self._is_resizing:
                 self._do_resize(gpos)
+                return True
+            if self._is_dragging:
+                delta = gpos - self._drag_start_global
+                self.move(self._drag_start_window_pos + delta)
                 return True
             zone = self._get_resize_zone(self.mapFromGlobal(gpos))
             self.setCursor(_CURSORS[zone]) if zone != _NONE else self.unsetCursor()
@@ -598,6 +596,9 @@ class StickyNote(QWidget):
                 self._is_resizing = False
                 self._resize_zone = _NONE
                 self.unsetCursor()
+                return True
+            if self._is_dragging:
+                self._is_dragging = False
                 return True
 
         return super().eventFilter(obj, event)
