@@ -17,6 +17,18 @@ from PyQt6.QtGui import (
 from . import config
 from . import utils
 
+
+# Bullet styles cycled by sublist depth so nested levels are visually distinct.
+_LIST_STYLES = (
+    QTextListFormat.Style.ListDisc,
+    QTextListFormat.Style.ListCircle,
+    QTextListFormat.Style.ListSquare,
+)
+
+
+def _style_for_indent(indent: int) -> QTextListFormat.Style:
+    return _LIST_STYLES[(max(1, indent) - 1) % len(_LIST_STYLES)]
+
 # ---------------------------------------------------------------------------
 # Resize zone ids
 # ---------------------------------------------------------------------------
@@ -47,17 +59,29 @@ _EDGES = {
 
 
 # ---------------------------------------------------------------------------
-# NoteTextEdit — thin subclass for Shift+Enter list-break
+# NoteTextEdit — Shift+Enter list-break, Tab/Shift+Tab sublist nesting
 # ---------------------------------------------------------------------------
 class NoteTextEdit(QTextEdit):
     def keyPressEvent(self, event):
+        key = event.key()
+        mods = event.modifiers()
+        cursor = self.textCursor()
+
+        # Tab / Shift+Tab — sublist nesting (only inside a list)
+        if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab) and cursor.currentList():
+            increase = key == Qt.Key.Key_Tab and not (mods & Qt.KeyboardModifier.ShiftModifier)
+            self._change_list_indent(increase)
+            return
+
+        # Shift+Enter — break out of list
         if (
-            event.key() == Qt.Key.Key_Return
-            and event.modifiers() == Qt.KeyboardModifier.ShiftModifier
-            and self.textCursor().currentList()
+            key == Qt.Key.Key_Return
+            and mods == Qt.KeyboardModifier.ShiftModifier
+            and cursor.currentList()
         ):
             self._break_out_of_list()
             return
+
         super().keyPressEvent(event)
 
     def _break_out_of_list(self):
@@ -71,6 +95,28 @@ class NoteTextEdit(QTextEdit):
         fmt.setIndent(0)
         cursor.setBlockFormat(fmt)
         self.setTextCursor(cursor)
+
+    def _change_list_indent(self, increase: bool):
+        cursor = self.textCursor()
+        current_list = cursor.currentList()
+        if not current_list:
+            return
+        current_indent = current_list.format().indent()
+        new_indent = current_indent + (1 if increase else -1)
+
+        if new_indent < 1:
+            # Outdent past level 1: remove the block from the list.
+            block = cursor.block()
+            current_list.remove(block)
+            bf = cursor.blockFormat()
+            bf.setIndent(0)
+            cursor.setBlockFormat(bf)
+            return
+
+        new_fmt = QTextListFormat()
+        new_fmt.setIndent(new_indent)
+        new_fmt.setStyle(_style_for_indent(new_indent))
+        cursor.createList(new_fmt)
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +371,7 @@ class FormatBar(QWidget):
         # Bullet button uses a painted icon (set in apply_colors); empty text
         self.bullet_btn    = self._make_btn("", "bulletBtn")
 
+        layout.addStretch()
         for btn in self._buttons():
             layout.addWidget(btn)
         layout.addStretch()
@@ -538,6 +585,9 @@ class StickyNote(QWidget):
         self.text_edit.setAcceptRichText(True)
         self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Tighter list indentation than Qt's 40px default — sticky notes are
+        # narrow, and the deep default eats real estate at every sublist level.
+        self.text_edit.document().setIndentWidth(config.LIST_INDENT_PX)
         bg_layout.addWidget(self.text_edit)
 
         self.format_bar = FormatBar(self.bg_widget)
