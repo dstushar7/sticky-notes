@@ -22,6 +22,7 @@ AUTOSAVE_INTERVAL_MS = 5000
 FONT_FAMILY = "Segoe UI, Ubuntu, Sans Serif"
 FONT_SIZE = 13
 COLLAPSE_ANIMATION_MS = 150
+LIST_INDENT_PX = 18         # bullet/sublist indent (Qt default is 40)
 
 # Legacy context-menu colors kept for tray menu styling
 MENU_BACKGROUND_COLOR = "#ffffff"

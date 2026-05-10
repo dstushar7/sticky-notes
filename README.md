@@ -17,7 +17,7 @@ Notes are automatically saved and fully restored between sessions.
 - 💾 Auto-saves note content, position, size, theme, and state every 5 seconds
 - 🎨 **7 color themes** — Yellow, Green, Pink, Purple, Blue, Gray, Charcoal
 - ✍️ **Rich text formatting** — Bold (`Ctrl+B`), Italic (`Ctrl+I`), Underline (`Ctrl+U`)
-- 📋 **Bullet lists** — Toggle with `Ctrl+Shift+L`; `Enter` continues the list, `Shift+Enter` breaks out
+- 📋 **Bullet lists with nested sublists** — Toggle with `Ctrl+Shift+L`; `Tab` indents to a sublist (style cycles ●→○→■), `Shift+Tab` outdents; `Enter` continues, `Shift+Enter` breaks out
 - 🪄 **Collapse / expand** — double-click the title bar to collapse a note to just its header
 - 🖱️ **Resizable from all 8 edges and corners** — no OS chrome needed
 - 🧩 System tray integration for quick access
@@ -82,6 +82,8 @@ Right-click the tray icon to:
 | **Bullet list on/off** | `Ctrl+Shift+L` |
 | **Continue list item** | `Enter` |
 | **Break out of list** | `Shift+Enter` |
+| **Indent (sublist)** | `Tab` while in a list |
+| **Outdent** | `Shift+Tab` while in a list |
 | **Collapse / expand** | Double-click the title bar spacer |
 | **Drag window** | Click and drag the title bar spacer |
 | **Resize window** | Drag any edge or corner (16 px grab zone) |
@@ -158,6 +160,8 @@ pip install -r requirements.txt
 | `Ctrl+U` | Underline |
 | `Ctrl+Shift+S` | Strikethrough |
 | `Ctrl+Shift+L` | Toggle bullet list |
+| `Tab` | Indent (sublist) inside a list |
+| `Shift+Tab` | Outdent inside a list |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Y` | Redo |
 | `Ctrl+A` | Select all |
