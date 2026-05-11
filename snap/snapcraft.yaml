@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '2.1.0'
+version: '2.2.1'
 summary: A simple and elegant sticky notes app for your desktop.
 icon: snap/gui/stickynotes.png
 description: |
