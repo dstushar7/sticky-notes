@@ -3,7 +3,7 @@
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QSettings
-from .note_window import StickyNote
+from .note_window import StickyNote, SettingsDialog
 from . import utils
 from . import config
 
@@ -14,6 +14,7 @@ class TrayManager:
     def __init__(self, app: QApplication):
         self.app = app
         self.open_notes = {}
+        self._settings_dialog = None
 
         self.app.setQuitOnLastWindowClosed(False)
         # app.quit() does not call closeEvent on individual windows, so any
@@ -46,6 +47,12 @@ class TrayManager:
 
         self.menu.addSeparator()
 
+        settings_action = QAction("Settings...", parent=self.tray_icon)
+        settings_action.triggered.connect(self._show_settings)
+        self.menu.addAction(settings_action)
+
+        self.menu.addSeparator()
+
         quit_action = QAction("Quit", parent=self.tray_icon)
         quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(quit_action)
@@ -71,6 +78,18 @@ class TrayManager:
     def _new_note_from_signal(self, theme_name: str):
         """Slot for StickyNote.newNoteRequested — creates note in same theme."""
         self._create_new_note(theme=theme_name)
+
+    def _show_settings(self):
+        # Reuse the existing dialog if it's already open so multiple clicks
+        # don't stack windows.
+        if self._settings_dialog is not None and self._settings_dialog.isVisible():
+            self._settings_dialog.raise_()
+            self._settings_dialog.activateWindow()
+            return
+        dlg = SettingsDialog()
+        dlg.finished.connect(lambda _r: setattr(self, "_settings_dialog", None))
+        self._settings_dialog = dlg
+        dlg.show()
 
     def _show_all_notes(self):
         if not self.open_notes:

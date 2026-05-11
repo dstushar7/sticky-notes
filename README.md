@@ -22,6 +22,7 @@ Notes are automatically saved and fully restored between sessions.
 - 🖱️ **Resizable from all 8 edges and corners** — no OS chrome needed
 - 🧩 System tray integration for quick access
 - 👁️ "Show All Notes" support to bring all notes to the front
+- 🚀 **Launch on system startup** toggle in Settings — self-cleaning XDG autostart entry, removes itself if the app is ever uninstalled
 - 🟢 Packaged as a **Snap app** for easy Linux installation
 
 ---
@@ -68,6 +69,7 @@ Right-click the tray icon to:
 
 - 📝 **New Note** — creates a note in the default Yellow theme
 - 👁️ **Show All Notes** — brings every note to the front
+- ⚙️ **Settings…** — toggle "Launch on system startup"
 - ❌ **Quit the Application**
 
 ### Inside each note

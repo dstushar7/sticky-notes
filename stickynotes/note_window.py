@@ -3,7 +3,7 @@
 import uuid
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel,
-    QSizePolicy, QGraphicsDropShadowEffect, QApplication,
+    QSizePolicy, QGraphicsDropShadowEffect, QApplication, QDialog, QCheckBox,
 )
 from PyQt6.QtCore import (
     QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray,
@@ -16,6 +16,7 @@ from PyQt6.QtGui import (
 
 from . import config
 from . import utils
+from . import autostart
 
 
 # Bullet styles cycled by sublist depth so nested levels are visually distinct.
@@ -1056,3 +1057,68 @@ class StickyNote(QWidget):
         if not self._is_being_deleted:
             self._save()
         super().closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# SettingsDialog — global app preferences (opened from the tray menu)
+# ---------------------------------------------------------------------------
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Plain "Settings" — desktop shells prepend the app name themselves,
+        # so a longer title gets duplicated and truncated by the WM.
+        self.setWindowTitle("Settings")
+        self.setModal(False)
+        self.resize(380, 180)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
+
+        title = QLabel("Settings")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        layout.addWidget(title)
+
+        self.autostart_cb = QCheckBox("Launch on system startup")
+        self.autostart_cb.setChecked(autostart.is_enabled())
+        self.autostart_cb.toggled.connect(self._on_autostart_toggled)
+        layout.addWidget(self.autostart_cb)
+
+        # Snap users can't write to the real ~/.config/autostart from inside
+        # the sandbox, so silently writing there would recreate the orphan-
+        # process bug. Disable the toggle with a clear explanation instead.
+        if autostart.is_snap_runtime():
+            self.autostart_cb.setEnabled(False)
+            hint = QLabel(
+                "Autostart is not available in the Snap build.\n"
+                "Use your desktop's “Startup Applications” panel instead."
+            )
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: #888; font-size: 9pt;")
+            layout.addWidget(hint)
+
+        self.status = QLabel("")
+        self.status.setStyleSheet("color: #cc0000; font-size: 9pt;")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+    def _on_autostart_toggled(self, checked: bool):
+        try:
+            autostart.set_enabled(checked)
+            self.status.clear()
+        except OSError as e:
+            # Revert the checkbox so the UI matches reality, then explain.
+            self.autostart_cb.blockSignals(True)
+            self.autostart_cb.setChecked(autostart.is_enabled())
+            self.autostart_cb.blockSignals(False)
+            self.status.setText(f"Could not update autostart: {e}")
