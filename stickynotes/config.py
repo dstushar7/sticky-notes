@@ -13,7 +13,7 @@ THEMES = {
     "charcoal": {"bg": "#4A4A4A", "title": "#333333", "text": "#f0f0f0"},
 }
 DEFAULT_THEME = "yellow"
-TITLE_BAR_HEIGHT = 32
+TITLE_BAR_HEIGHT = 38           # taller bar gives the floating chip buttons room to cast a shadow
 SHADOW_GUTTER = 12          # transparent margin for the drop shadow
 RESIZE_ZONE = 16            # >= SHADOW_GUTTER so resize grip reaches the visible note edge
 MIN_NOTE_WIDTH = 160

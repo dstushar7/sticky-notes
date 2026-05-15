@@ -20,6 +20,7 @@ from PyQt6.QtGui import (
 from . import config
 from . import utils
 from . import autostart
+from .widgets import FloatingButton
 
 
 def _now_iso() -> str:
@@ -168,6 +169,11 @@ class OptionsPanel(QWidget):
             Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint,
         )
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # Give the popup an alpha channel so the four corners outside the
+        # 8 px border-radius become genuinely transparent, instead of the
+        # default opaque widget background that otherwise frames the panel
+        # with four dark dots.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._dismissed = False
         self._current_theme = current_theme
         self._setup_ui()
@@ -545,15 +551,22 @@ class TitleBar(QWidget):
         # Otherwise the parent (bg_widget) paints the body color through us.
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(config.TITLE_BAR_HEIGHT)
+        # Style state — kept so set_collapsed_style and apply_colors can
+        # re-emit the stylesheet without re-passing every parameter.
+        self._title_bg = "#F9E44A"
+        self._is_collapsed_style = False
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(4)  # tiny breathing room between chip buttons and pill
 
-        self.add_btn = QPushButton("+")
-        self.add_btn.setFixedSize(32, 32)
+        self.add_btn = FloatingButton(
+            "+",
+            tone=FloatingButton.Tone.TITLE_BAR,
+            font_css="font-size: 16pt;",
+        )
         self.add_btn.clicked.connect(self.newNoteRequested.emit)
         layout.addWidget(self.add_btn)
 
@@ -561,41 +574,56 @@ class TitleBar(QWidget):
         self.drag_handle.title_widget.committed.connect(self.titleCommitted.emit)
         layout.addWidget(self.drag_handle)
 
-        self.opts_btn = QPushButton("•••")
-        self.opts_btn.setFixedSize(32, 32)
+        self.opts_btn = FloatingButton(
+            "•••",
+            tone=FloatingButton.Tone.TITLE_BAR,
+            font_css="font-size: 10pt;",
+        )
         self.opts_btn.clicked.connect(self.optionsRequested.emit)
         layout.addWidget(self.opts_btn)
 
-    def apply_colors(self, title_bg: str, btn_color: str = "#555555",
-                     hover_overlay: str = "rgba(0, 0, 0, 0.12)"):
-        """Restyle title bar and its buttons with the given colors."""
+    def apply_colors(self, title_bg: str, btn_color: str, hover_overlay: str,
+                     is_dark_theme: bool):
+        """Restyle the title bar surface, its buttons, and the title pill.
+
+        - title_bg: bar background color (theme["title"])
+        - btn_color: text/icon color for buttons and the title pill
+        - hover_overlay: overlay used by the title pill on hover/edit
+        - is_dark_theme: forwarded to FloatingButton so it picks the
+          dark-glass token set on charcoal
+        """
         self._title_bg = title_bg
         self._btn_color = btn_color
-        self.setStyleSheet(f"""
-            QWidget#titleBar {{
-                background-color: {title_bg};
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-            }}
-        """)
-        btn_style = f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-radius: 4px;
-                color: {btn_color};
-            }}
-            QPushButton:hover {{
-                background-color: {hover_overlay};
-            }}
-        """
-        self.add_btn.setStyleSheet(btn_style + "QPushButton { font-size: 16pt; }")
-        self.opts_btn.setStyleSheet(btn_style + "QPushButton { font-size: 10pt; }")
+        self._rebuild_bar_style()
+        FloatingButton.apply_theme_to_all(
+            (self.add_btn, self.opts_btn), btn_color, is_dark_theme
+        )
         # DragHandle owns the styling for both its own surface and the inner
         # drag-area widget (parent-cascade isn't reliable, so each widget
         # is given its own stylesheet directly).
         self.drag_handle.apply_bg(title_bg)
         self.drag_handle.title_widget.apply_text_style(btn_color, hover_overlay)
+
+    def set_collapsed_style(self, collapsed: bool):
+        """Switch the bar between 'top of a note' shape (rounded top only) and
+        'self-contained pill' shape (rounded all corners) used while the
+        note is collapsed."""
+        if self._is_collapsed_style == collapsed:
+            return
+        self._is_collapsed_style = collapsed
+        self._rebuild_bar_style()
+
+    def _rebuild_bar_style(self):
+        bottom_radius = 8 if self._is_collapsed_style else 0
+        self.setStyleSheet(f"""
+            QWidget#titleBar {{
+                background-color: {self._title_bg};
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                border-bottom-left-radius: {bottom_radius}px;
+                border-bottom-right-radius: {bottom_radius}px;
+            }}
+        """)
 
     def set_title_text(self, text: str):
         """Render the title text in the drag handle (eliding handled inside)."""
@@ -634,12 +662,12 @@ class FormatBar(QWidget):
         layout.setContentsMargins(6, 3, 6, 3)
         layout.setSpacing(3)
 
-        self.bold_btn      = self._make_btn("B", "boldBtn")
-        self.italic_btn    = self._make_btn("I", "italicBtn")
-        self.underline_btn = self._make_btn("U", "underlineBtn")
-        self.strike_btn    = self._make_btn("S", "strikeBtn")
+        self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: bold;")
+        self.italic_btn    = self._make_btn("I", "italicBtn",    "font-style: italic;")
+        self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline;")
+        self.strike_btn    = self._make_btn("S", "strikeBtn",    "text-decoration: line-through;")
         # Bullet button uses a painted icon (set in apply_colors); empty text
-        self.bullet_btn    = self._make_btn("", "bulletBtn")
+        self.bullet_btn    = self._make_btn("", "bulletBtn",     "")
 
         layout.addStretch()
         for btn in self._buttons():
@@ -657,13 +685,14 @@ class FormatBar(QWidget):
                 self.strike_btn, self.bullet_btn)
 
     @staticmethod
-    def _make_btn(label: str, name: str) -> QPushButton:
-        btn = QPushButton(label)
+    def _make_btn(label: str, name: str, extra_css: str) -> FloatingButton:
+        btn = FloatingButton(
+            label,
+            tone=FloatingButton.Tone.TOOLBAR,
+            checkable=True,
+            extra_css=extra_css,
+        )
         btn.setObjectName(name)
-        btn.setCheckable(True)
-        # Don't steal keyboard focus from QTextEdit; otherwise pressing a
-        # button shifts focus and Ctrl+B/I/U shortcuts stop working.
-        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         return btn
 
     def apply_size(self, btn_size: int):
@@ -677,18 +706,18 @@ class FormatBar(QWidget):
         self.setFixedHeight(btn_size + 6)
         for btn in self._buttons():
             btn.setFixedSize(btn_size, btn_size)
-        # Re-apply theme so font sizes inside the stylesheet pick up the new size
+        # Re-apply theme so font sizes and the bullet icon pick up the new size
         if self._last_colors is not None:
             self.apply_colors(*self._last_colors)
 
-    def apply_colors(self, bg_color: str, btn_color: str, hover_overlay: str,
-                     active_overlay: str):
-        """Restyle bar and buttons. active_overlay = checked-state background."""
-        self._last_colors = (bg_color, btn_color, hover_overlay, active_overlay)
+    def apply_colors(self, bg_color: str, btn_color: str, is_dark_theme: bool):
+        """Restyle the bar surface, all five buttons (via FloatingButton),
+        and the bullet button's painted icon."""
+        self._last_colors = (bg_color, btn_color, is_dark_theme)
 
-        # Font sizes scale with button size
-        font_px = max(11, int(self._btn_size * 0.45))      # ~13 at btn 30
-        bullet_px = max(15, int(self._btn_size * 0.65))    # ~19 at btn 30
+        # Font size scales with button size — ~13 at btn 30, ~20 at btn 44
+        font_px = max(11, int(self._btn_size * 0.45))
+        font_css = f"font-size: {font_px}px;"
 
         self.setStyleSheet(f"""
             QWidget#formatBar {{
@@ -697,27 +726,10 @@ class FormatBar(QWidget):
                 border-bottom-right-radius: 8px;
             }}
         """)
-        common = f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-radius: 4px;
-                color: {btn_color};
-                font-size: {font_px}px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_overlay};
-            }}
-            QPushButton:checked {{
-                background-color: {active_overlay};
-            }}
-        """
-        # Per-button font styling so each button visually shows its action
-        self.bold_btn.setStyleSheet(common + "QPushButton { font-weight: bold; }")
-        self.italic_btn.setStyleSheet(common + "QPushButton { font-style: italic; }")
-        self.underline_btn.setStyleSheet(common + "QPushButton { text-decoration: underline; }")
-        self.strike_btn.setStyleSheet(common + "QPushButton { text-decoration: line-through; }")
-        self.bullet_btn.setStyleSheet(common)
+        for btn in self._buttons():
+            btn.set_font_css(font_css)
+        FloatingButton.apply_theme_to_all(self._buttons(), btn_color, is_dark_theme)
+
         # Painted bullet-list icon, recolored to match the current btn_color
         icon_px = max(14, int(self._btn_size * 0.7))
         self.bullet_btn.setIcon(utils.create_bullet_list_icon(btn_color, icon_px))
@@ -900,11 +912,13 @@ class StickyNote(QWidget):
 
         outer.addWidget(self.bg_widget)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(24)
-        shadow.setOffset(0, 5)
-        shadow.setColor(QColor(0, 0, 0, 130))
-        self.bg_widget.setGraphicsEffect(shadow)
+        # Body drop shadow. Kept as an instance attribute so collapse/expand
+        # can swap to a tighter, denser shadow profile when the note shrinks
+        # to just the title bar (where the bigger expanded shadow gets clipped
+        # by the window edge and the bar reads as having a harsh bottom).
+        self._bg_shadow = QGraphicsDropShadowEffect(self)
+        self.bg_widget.setGraphicsEffect(self._bg_shadow)
+        self._apply_expanded_shadow()
 
     def _setup_shortcuts(self):
         # QTextEdit doesn't bind Ctrl+B/I/U on its own — wire them explicitly.
@@ -942,7 +956,6 @@ class StickyNote(QWidget):
         is_dark = text_color == "#f0f0f0"
         btn_color = "#cccccc" if is_dark else "#555555"
         hover_overlay = "rgba(255, 255, 255, 0.18)" if is_dark else "rgba(0, 0, 0, 0.12)"
-        active_overlay = "rgba(255, 255, 255, 0.28)" if is_dark else "rgba(0, 0, 0, 0.20)"
 
         self.bg_widget.setStyleSheet(f"""
             QWidget#noteBackground {{
@@ -950,8 +963,8 @@ class StickyNote(QWidget):
                 border-radius: 8px;
             }}
         """)
-        self.title_bar.apply_colors(title_bg, btn_color, hover_overlay)
-        self.format_bar.apply_colors(title_bg, btn_color, hover_overlay, active_overlay)
+        self.title_bar.apply_colors(title_bg, btn_color, hover_overlay, is_dark)
+        self.format_bar.apply_colors(title_bg, btn_color, is_dark)
         self.text_edit.setStyleSheet(f"""
             NoteTextEdit {{
                 background-color: transparent;
@@ -1027,6 +1040,22 @@ class StickyNote(QWidget):
     # Collapse / expand
     # ------------------------------------------------------------------
 
+    def _apply_expanded_shadow(self):
+        """Roomy soft shadow for the full note. Tuned for a body window
+        whose silhouette gives the shadow plenty of geometry to drape."""
+        self._bg_shadow.setBlurRadius(24)
+        self._bg_shadow.setOffset(0, 5)
+        self._bg_shadow.setColor(QColor(0, 0, 0, 130))
+
+    def _apply_collapsed_shadow(self):
+        """Tighter, denser shadow used while collapsed. The body's gone so
+        the shadow has to sell the 'floating pill' feel on its own — and
+        a tighter blur stays within SHADOW_GUTTER instead of being clipped
+        at the (now small) window edge."""
+        self._bg_shadow.setBlurRadius(14)
+        self._bg_shadow.setOffset(0, 4)
+        self._bg_shadow.setColor(QColor(0, 0, 0, 175))
+
     def toggle_collapse(self):
         if self._is_collapsed:
             self._expand()
@@ -1039,6 +1068,11 @@ class StickyNote(QWidget):
         # Lock title editing while collapsed — committing first so any
         # in-progress rename isn't silently dropped.
         self.title_bar.set_title_editable(False)
+        # Round all four title-bar corners and swap to the dense floating-
+        # pill shadow so the bottom of the collapsed note reads as a soft
+        # rounded edge, not a hard cut.
+        self.title_bar.set_collapsed_style(True)
+        self._apply_collapsed_shadow()
 
         # Allow window to shrink below its normal minimum
         self.setMinimumHeight(0)
@@ -1069,6 +1103,10 @@ class StickyNote(QWidget):
         target_h = max(self._pre_collapse_height, config.MIN_NOTE_HEIGHT)
         # Re-enable title click-to-rename now that the body is back.
         self.title_bar.set_title_editable(True)
+        # Square off the title bar's bottom corners and restore the larger
+        # body shadow — the body is about to reappear behind it.
+        self.title_bar.set_collapsed_style(False)
+        self._apply_expanded_shadow()
 
         self.text_edit.show()
         self.format_bar.show()
@@ -1095,6 +1133,8 @@ class StickyNote(QWidget):
         collapsed_h = config.TITLE_BAR_HEIGHT + 2 * config.SHADOW_GUTTER
         self._is_collapsed = True
         self.title_bar.set_title_editable(False)
+        self.title_bar.set_collapsed_style(True)
+        self._apply_collapsed_shadow()
         self.text_edit.hide()
         self.format_bar.hide()
         self.setMinimumHeight(0)
