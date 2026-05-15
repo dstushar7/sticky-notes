@@ -24,6 +24,15 @@ FONT_SIZE = 13
 COLLAPSE_ANIMATION_MS = 150
 LIST_INDENT_PX = 18         # bullet/sublist indent (Qt default is 40)
 
+# Note titles
+DEFAULT_NOTE_TITLE = "New Note"
+MAX_TITLE_LENGTH = 40       # strict cap; enforced by the QLineEdit and tray menu
+AUTO_SEED_WORD_COUNT = 2    # words pulled from the first body line as the smart default
+TITLE_DRAG_SPACER_WIDTH = 40  # reserved drag/collapse grab area on the right of the title
+
+# Tray menu
+TRAY_MENU_NOTE_LIMIT = 10   # max number of notes listed in the tray menu
+
 # Legacy context-menu colors kept for tray menu styling
 MENU_BACKGROUND_COLOR = "#ffffff"
 MENU_TEXT_COLOR = "#000000"

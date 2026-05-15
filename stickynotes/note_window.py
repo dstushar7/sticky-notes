@@ -1,9 +1,11 @@
 # stickynotes/note_window.py
 
 import uuid
+from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel,
-    QSizePolicy, QGraphicsDropShadowEffect, QApplication, QDialog, QCheckBox,
+    QLineEdit, QStackedLayout, QSizePolicy, QGraphicsDropShadowEffect,
+    QApplication, QDialog, QCheckBox,
 )
 from PyQt6.QtCore import (
     QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray,
@@ -12,11 +14,31 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextCursor, QKeySequence, QShortcut, QFont,
+    QFontMetrics,
 )
 
 from . import config
 from . import utils
 from . import autostart
+
+
+def _now_iso() -> str:
+    """Timezone-aware UTC ISO-8601 timestamp used for last_edited."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def derive_title_from_text(plain_text: str) -> str:
+    """Title from the first non-empty body line, capped at AUTO_SEED_WORD_COUNT
+    words and MAX_TITLE_LENGTH characters. Falls back to DEFAULT_NOTE_TITLE."""
+    if plain_text:
+        for line in plain_text.splitlines():
+            stripped = line.strip()
+            if stripped:
+                words = stripped.split()[:config.AUTO_SEED_WORD_COUNT]
+                derived = " ".join(words)[:config.MAX_TITLE_LENGTH].strip()
+                if derived:
+                    return derived
+    return config.DEFAULT_NOTE_TITLE
 
 
 # Bullet styles cycled by sublist depth so nested levels are visually distinct.
@@ -224,28 +246,279 @@ class OptionsPanel(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# DragHandle — transparent spacer in the title bar.
-# Drag and release are handled by StickyNote.eventFilter so the top-level
-# window calls self.move() directly (more reliable than doing it from a child).
-# Only double-click is handled here because it's a discrete gesture that
-# doesn't need the event-filter machinery.
+# EditableTitleLabel — read-only label that swaps to a QLineEdit on click.
+#
+# Behavior:
+#   - Single-click on the visible label (when editable) → enter edit mode.
+#   - Enter or focus-loss → commit via the `committed(str)` signal.
+#   - Escape → cancel without emitting.
+#   - set_editable(False) commits any in-progress edit and disables click +
+#     hover affordance — used when the note is collapsed.
+#
+# Layout: QStackedLayout swaps a QLabel (display) with a QLineEdit (edit).
+# Mouse-event consumption is intentional: we install ourselves as an event
+# filter on the inner label so single-click is captured before propagating
+# back to StickyNote's resize/drag filter.
+# ---------------------------------------------------------------------------
+class EditableTitleLabel(QWidget):
+    committed = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("titlePill")
+        # Pill sizes to its text content, never overflows. Stacked layout's
+        # contentsMargins give the pill its horizontal padding.
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+        self._editable = True
+        self._current_text = ""
+        self._text_color = "#555555"
+        self._hover_overlay = "rgba(0, 0, 0, 0.12)"
+
+        self._stack = QStackedLayout(self)
+        self._stack.setContentsMargins(8, 2, 8, 2)
+
+        self._label = QLabel("")
+        self._label.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+        )
+        self._label.setCursor(Qt.CursorShape.IBeamCursor)
+        self._label.installEventFilter(self)
+
+        self._edit = QLineEdit("")
+        self._edit.setMaxLength(config.MAX_TITLE_LENGTH)
+        self._edit.setFrame(False)
+        self._edit.installEventFilter(self)
+        self._edit.editingFinished.connect(self._on_editing_finished)
+
+        self._stack.addWidget(self._label)
+        self._stack.addWidget(self._edit)
+        self._stack.setCurrentIndex(0)
+
+    # ---- Public API ---------------------------------------------------
+
+    def set_text(self, text: str):
+        self._current_text = text
+        self._update_display()
+        self.updateGeometry()  # sizeHint changed, ask layout to re-measure
+
+    def current_text(self) -> str:
+        return self._current_text
+
+    def set_editable(self, editable: bool):
+        """Toggle the click-to-edit affordance. Used to disable rename while
+        the note is collapsed; force-commits any in-progress edit on lock."""
+        if self._editable == editable:
+            return
+        self._editable = editable
+        if not editable and self._stack.currentIndex() == 1:
+            # Force-commit before locking so the user doesn't lose typing
+            self._on_editing_finished()
+        self._label.setCursor(
+            Qt.CursorShape.IBeamCursor if editable else Qt.CursorShape.ArrowCursor
+        )
+        self._apply_pill_style()
+
+    def is_editing(self) -> bool:
+        return self._stack.currentIndex() == 1
+
+    def apply_text_style(self, text_color: str, hover_overlay: str):
+        """Style the pill and its text content. Hover/edit states show the
+        overlay color; idle state is fully transparent so the title text
+        sits flush on the title bar background."""
+        self._text_color = text_color
+        self._hover_overlay = hover_overlay
+        text_qss = (
+            f"color: {text_color}; background-color: transparent;"
+            f"font-size: 10pt; font-weight: 600;"
+        )
+        self._label.setStyleSheet(f"QLabel {{ {text_qss} }}")
+        self._edit.setStyleSheet(
+            f"QLineEdit {{ {text_qss} border: none; padding: 0px; "
+            f"selection-background-color: {text_color}; "
+            f"selection-color: white; }}"
+        )
+        self._apply_pill_style()
+
+    def _apply_pill_style(self):
+        """(Re)compute the pill background. Hidden when collapsed; hover-only
+        when display mode; always-on when editing."""
+        if not self._editable:
+            # Collapsed → no pill, no hover. Just plain text on title bar.
+            self.setStyleSheet(
+                "QWidget#titlePill { background-color: transparent; "
+                "border-radius: 10px; }"
+            )
+            return
+        if self.is_editing():
+            # Active edit → keep the pill visible the whole time
+            self.setStyleSheet(
+                f"QWidget#titlePill {{ background-color: {self._hover_overlay}; "
+                f"border-radius: 10px; }}"
+            )
+            return
+        # Display mode, clickable → reveal pill only on hover
+        self.setStyleSheet(
+            "QWidget#titlePill {"
+            " background-color: transparent; border-radius: 10px; }"
+            f" QWidget#titlePill:hover {{ background-color: {self._hover_overlay}; }}"
+        )
+
+    # ---- Event handling ----------------------------------------------
+
+    def eventFilter(self, obj, event):
+        if obj is self._label:
+            if (event.type() == QEvent.Type.MouseButtonPress
+                    and event.button() == Qt.MouseButton.LeftButton):
+                if self._editable:
+                    self._enter_edit_mode()
+                    return True
+        elif obj is self._edit:
+            if (event.type() == QEvent.Type.KeyPress
+                    and event.key() == Qt.Key.Key_Escape):
+                self._cancel_edit()
+                return True
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_display()
+
+    # ---- Mode transitions --------------------------------------------
+
+    def _enter_edit_mode(self):
+        self._edit.setText(self._current_text)
+        self._stack.setCurrentIndex(1)
+        self._apply_pill_style()
+        self._edit.setFocus(Qt.FocusReason.MouseFocusReason)
+        self._edit.selectAll()
+
+    def _on_editing_finished(self):
+        # Fires on Enter and on focus-loss. Re-entrancy-safe via the
+        # currentIndex check (cancel already switched us back to display).
+        if self._stack.currentIndex() != 1:
+            return
+        new_text = self._edit.text()
+        self._stack.setCurrentIndex(0)
+        self._update_display()
+        self._apply_pill_style()
+        self.committed.emit(new_text)
+
+    def _cancel_edit(self):
+        if self._stack.currentIndex() != 1:
+            return
+        # Block signals so the focus-out from the hide() doesn't fire
+        # editingFinished and re-trigger a commit on the unchanged text.
+        self._edit.blockSignals(True)
+        self._stack.setCurrentIndex(0)
+        self._edit.blockSignals(False)
+        self._update_display()
+        self._apply_pill_style()
+
+    def _update_display(self):
+        text = self._current_text
+        if not text:
+            self._label.setText("")
+            self._label.setToolTip("")
+            return
+        metrics = QFontMetrics(self._label.font())
+        m = self._stack.contentsMargins()
+        avail = self.width() - m.left() - m.right() - 2
+        if avail <= 0:
+            # First paint, layout not settled — show full text; resizeEvent
+            # will re-run this once we have a real width.
+            self._label.setText(text)
+        elif metrics.horizontalAdvance(text) <= avail:
+            self._label.setText(text)
+        else:
+            self._label.setText(
+                metrics.elidedText(text, Qt.TextElideMode.ElideRight, max(20, avail))
+            )
+        self._label.setToolTip(text)
+
+    def sizeHint(self) -> QSize:
+        """Pill sizes to its text. We compute this ourselves (rather than
+        letting QLabel.sizeHint drive it) so that eliding the label text
+        doesn't feed back into our own sizeHint and cause an infinite
+        shrink loop in the layout."""
+        metrics = QFontMetrics(self._label.font())
+        text_w = metrics.horizontalAdvance(self._current_text or " ")
+        m = self._stack.contentsMargins()
+        return QSize(
+            text_w + m.left() + m.right() + 2,
+            metrics.height() + m.top() + m.bottom(),
+        )
+
+    def minimumSizeHint(self) -> QSize:
+        metrics = QFontMetrics(self._label.font())
+        m = self._stack.contentsMargins()
+        return QSize(
+            24 + m.left() + m.right(),
+            metrics.height() + m.top() + m.bottom(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# DragHandle — title-bar grab strip housing the editable title.
+#
+# Layout: [EditableTitleLabel (pill, sized to text)] [drag area (fills rest)]
+#
+# The title pill claims only as much width as its text needs (Maximum size
+# policy). The remainder of the strip is the drag area — an expanding,
+# mouse-transparent QWidget so clicks pass through to DragHandle itself,
+# which is what StickyNote.eventFilter watches for drag start, and what
+# our own mouseDoubleClickEvent uses for collapse. Result: drag and
+# double-click work across almost the whole title bar; click-to-rename
+# is only triggered on the pill.
 # ---------------------------------------------------------------------------
 class DragHandle(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("dragHandle")
+        # QWidget subclasses don't paint their stylesheet background unless
+        # this attribute is set — without it, the parent's color leaks
+        # through and the title bar looks like the body color.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # Title label — auto-derived from the first non-empty line of content.
-        # Transparent to mouse events so drag/double-click still go to DragHandle.
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 0, 8, 0)
         layout.setSpacing(0)
-        self.title_label = QLabel("")
-        self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.title_label.setAlignment(
-            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+
+        self.title_widget = EditableTitleLabel(self)
+        layout.addWidget(self.title_widget, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # Drag/collapse grab area — fills all remaining horizontal space.
+        # Mouse-transparent so clicks reach DragHandle itself.
+        self._drag_area = QWidget(self)
+        self._drag_area.setObjectName("dragArea")
+        self._drag_area.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        layout.addWidget(self.title_label)
+        self._drag_area.setMinimumWidth(config.TITLE_DRAG_SPACER_WIDTH)
+        self._drag_area.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        # WA_StyledBackground forces Qt to honor a setStyleSheet background
+        # on this widget. Without it, on some platform/style combinations
+        # Qt paints the system palette window color for a plain QWidget
+        # regardless of stylesheet cascade from the parent.
+        self._drag_area.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True
+        )
+        layout.addWidget(self._drag_area)
+
+    def apply_bg(self, color: str):
+        """Paint both surfaces of the drag handle in the title-bar color.
+        Each widget is styled directly (not via a parent-cascade rule),
+        because cascading background-color from a parent stylesheet to a
+        plain QWidget child is unreliable across Qt themes."""
+        self.setStyleSheet(
+            f"QWidget#dragHandle {{ background-color: {color}; }}"
+        )
+        self._drag_area.setStyleSheet(
+            f"QWidget#dragArea {{ background-color: {color}; }}"
+        )
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -263,10 +536,14 @@ class DragHandle(QWidget):
 class TitleBar(QWidget):
     newNoteRequested = pyqtSignal()
     optionsRequested = pyqtSignal()
+    titleCommitted = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("titleBar")
+        # QWidget subclasses need this to honor a stylesheet background-color.
+        # Otherwise the parent (bg_widget) paints the body color through us.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(config.TITLE_BAR_HEIGHT)
         self._setup_ui()
 
@@ -281,6 +558,7 @@ class TitleBar(QWidget):
         layout.addWidget(self.add_btn)
 
         self.drag_handle = DragHandle(self)
+        self.drag_handle.title_widget.committed.connect(self.titleCommitted.emit)
         layout.addWidget(self.drag_handle)
 
         self.opts_btn = QPushButton("•••")
@@ -313,30 +591,19 @@ class TitleBar(QWidget):
         """
         self.add_btn.setStyleSheet(btn_style + "QPushButton { font-size: 16pt; }")
         self.opts_btn.setStyleSheet(btn_style + "QPushButton { font-size: 10pt; }")
-        # Drag handle background; title label inherits theme color
-        self.drag_handle.setStyleSheet(
-            f"background-color: {title_bg};"
-        )
-        self.drag_handle.title_label.setStyleSheet(
-            f"color: {btn_color}; background-color: transparent; "
-            f"font-size: 10pt; font-weight: 600;"
-        )
+        # DragHandle owns the styling for both its own surface and the inner
+        # drag-area widget (parent-cascade isn't reliable, so each widget
+        # is given its own stylesheet directly).
+        self.drag_handle.apply_bg(title_bg)
+        self.drag_handle.title_widget.apply_text_style(btn_color, hover_overlay)
 
     def set_title_text(self, text: str):
-        """Set (and elide) the auto-derived title displayed in the drag handle."""
-        self._full_title = text
-        label = self.drag_handle.title_label
-        avail = max(20, label.width() - 12)
-        from PyQt6.QtGui import QFontMetrics
-        metrics = QFontMetrics(label.font())
-        label.setText(metrics.elidedText(text, Qt.TextElideMode.ElideRight, avail))
-        label.setToolTip(text if text else "")
+        """Render the title text in the drag handle (eliding handled inside)."""
+        self.drag_handle.title_widget.set_text(text)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Re-elide the title for the new available width
-        if hasattr(self, "_full_title"):
-            self.set_title_text(self._full_title)
+    def set_title_editable(self, editable: bool):
+        """Lock/unlock click-to-rename. Used when the note is collapsed."""
+        self.drag_handle.title_widget.set_editable(editable)
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +622,8 @@ class FormatBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("formatBar")
+        # QWidget subclasses need this to honor a stylesheet background-color.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._btn_size = self.BTN_DEFAULT
         self._last_colors = None    # remembered for re-apply after resize
         self._setup_ui()
@@ -460,7 +729,8 @@ class FormatBar(QWidget):
 # ---------------------------------------------------------------------------
 class StickyNote(QWidget):
     noteDeleted = pyqtSignal(str)
-    newNoteRequested = pyqtSignal(str)   # emits theme_name
+    newNoteRequested = pyqtSignal(str)        # emits theme_name
+    titleChanged = pyqtSignal(str, str)        # emits (note_id, new_title)
 
     def __init__(
         self,
@@ -469,6 +739,8 @@ class StickyNote(QWidget):
         geometry_data=None,
         theme=config.DEFAULT_THEME,
         collapsed=False,
+        title=None,
+        last_edited=None,
         parent=None,
     ):
         super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
@@ -484,6 +756,13 @@ class StickyNote(QWidget):
         self._pre_collapse_height = 250
         self._options_panel = None
         self._anim_group = None
+
+        # Title state. A missing `title` (None) marks this note as "still on
+        # the smart default" — body edits will keep refreshing the displayed
+        # title from the first body line until the user commits a custom one.
+        self._title_is_default = (title is None)
+        self._title = title or config.DEFAULT_NOTE_TITLE
+        self._last_edited = last_edited or _now_iso()
 
         # Resize tracking
         self._resize_zone = _NONE
@@ -548,8 +827,18 @@ class StickyNote(QWidget):
                 self.text_edit.setHtml(content)
             else:
                 self.text_edit.setPlainText(content)
-        # Initial title (also covers the empty-content "New note" case)
-        self._refresh_title()
+
+        # Seed the title from body if still on the smart default — covers
+        # both brand-new notes (empty body → DEFAULT_NOTE_TITLE) and legacy
+        # notes loaded without a stored title (derive from existing body so
+        # the user sees the same identity they had before the upgrade).
+        if self._title_is_default:
+            self._title = derive_title_from_text(self.text_edit.toPlainText())
+        self._refresh_title_display()
+
+        # Only now connect body-edit tracking — keeps the initial setHtml
+        # from being treated as a user edit.
+        self.text_edit.textChanged.connect(self._on_body_changed)
 
         if collapsed:
             QTimer.singleShot(0, self._collapse_immediately)
@@ -579,6 +868,7 @@ class StickyNote(QWidget):
             lambda: self.newNoteRequested.emit(self._theme_name)
         )
         self.title_bar.optionsRequested.connect(self._show_options_panel)
+        self.title_bar.titleCommitted.connect(self._on_title_committed)
         bg_layout.addWidget(self.title_bar)
 
         self.text_edit = NoteTextEdit(self.bg_widget)
@@ -604,8 +894,9 @@ class StickyNote(QWidget):
         self.text_edit.currentCharFormatChanged.connect(
             lambda _fmt: self._refresh_format_bar()
         )
-        # Auto-derive title from first non-empty line of content
-        self.text_edit.textChanged.connect(self._refresh_title)
+        # Body-edit handler is wired AFTER the initial content load in
+        # __init__ so the load itself doesn't bump last_edited or trigger
+        # spurious title derivation.
 
         outer.addWidget(self.bg_widget)
 
@@ -745,6 +1036,9 @@ class StickyNote(QWidget):
     def _collapse(self):
         self._pre_collapse_height = self.height()
         self._is_collapsed = True
+        # Lock title editing while collapsed — committing first so any
+        # in-progress rename isn't silently dropped.
+        self.title_bar.set_title_editable(False)
 
         # Allow window to shrink below its normal minimum
         self.setMinimumHeight(0)
@@ -773,6 +1067,8 @@ class StickyNote(QWidget):
     def _expand(self):
         self._is_collapsed = False
         target_h = max(self._pre_collapse_height, config.MIN_NOTE_HEIGHT)
+        # Re-enable title click-to-rename now that the body is back.
+        self.title_bar.set_title_editable(True)
 
         self.text_edit.show()
         self.format_bar.show()
@@ -798,6 +1094,7 @@ class StickyNote(QWidget):
         """Apply collapsed state on load without animation."""
         collapsed_h = config.TITLE_BAR_HEIGHT + 2 * config.SHADOW_GUTTER
         self._is_collapsed = True
+        self.title_bar.set_title_editable(False)
         self.text_edit.hide()
         self.format_bar.hide()
         self.setMinimumHeight(0)
@@ -850,14 +1147,44 @@ class StickyNote(QWidget):
         self.format_bar.strike_btn.setChecked(fmt.fontStrikeOut())
         self.format_bar.bullet_btn.setChecked(cursor.currentList() is not None)
 
-    def _refresh_title(self):
-        """Set the title-bar label from the first non-empty line of content."""
-        text = self.text_edit.toPlainText()
-        first = next(
-            (line.strip() for line in text.splitlines() if line.strip()),
-            "New note",
-        )
-        self.title_bar.set_title_text(first)
+    def _refresh_title_display(self):
+        """Push the current `_title` value to the title bar."""
+        self.title_bar.set_title_text(self._title)
+
+    def _on_body_changed(self):
+        """Body content changed via user input. Updates last_edited and,
+        while the title is still on the smart default, re-derives the
+        displayed title from the first body line."""
+        self._last_edited = _now_iso()
+        if self._title_is_default:
+            new_title = derive_title_from_text(self.text_edit.toPlainText())
+            if new_title != self._title:
+                self._title = new_title
+                self._refresh_title_display()
+                self.titleChanged.emit(self.note_id, self._title)
+        # Debounce save so a typing burst doesn't spam QSettings
+        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
+            self._save_debounce.start()
+
+    def _on_title_committed(self, raw_text: str):
+        """Slot for the title bar's QLineEdit commit. Trims, caps length,
+        ignores empty-input commits (keeps previous title), and locks the
+        smart-default flag once a custom title is accepted."""
+        cleaned = raw_text.strip()[:config.MAX_TITLE_LENGTH]
+        if not cleaned:
+            # Empty/whitespace → revert to previous title (refresh display
+            # in case the QLineEdit briefly displayed the empty string)
+            self._refresh_title_display()
+            return
+        if cleaned == self._title and not self._title_is_default:
+            return  # no-op commit
+        self._title = cleaned
+        self._title_is_default = False
+        self._last_edited = _now_iso()
+        self._refresh_title_display()
+        self.titleChanged.emit(self.note_id, self._title)
+        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
+            self._save_debounce.start()
 
     def _remove_list(self, cursor: QTextCursor):
         start = cursor.selectionStart()
@@ -1039,18 +1366,29 @@ class StickyNote(QWidget):
     # Persistence
     # ------------------------------------------------------------------
 
+    # Read-only accessors used by TrayManager when building its menu
+    @property
+    def title(self) -> str:
+        return self._title
+
+    @property
+    def last_edited(self) -> str:
+        return self._last_edited
+
     def _save(self):
         if self._is_being_deleted:
             return
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
-        settings.setValue(f"{self.note_id}/content",   self.text_edit.toHtml())
+        settings.setValue(f"{self.note_id}/content",     self.text_edit.toHtml())
         # Use Qt's encoded geometry — this is the path Wayland compositors
         # honor at window mapping. Manual x/y/w/h via move() doesn't work
         # because Wayland forbids apps from positioning themselves.
-        settings.setValue(f"{self.note_id}/geometry",  self.saveGeometry())
-        settings.setValue(f"{self.note_id}/theme",     self._theme_name)
-        settings.setValue(f"{self.note_id}/collapsed", self._is_collapsed)
+        settings.setValue(f"{self.note_id}/geometry",    self.saveGeometry())
+        settings.setValue(f"{self.note_id}/theme",       self._theme_name)
+        settings.setValue(f"{self.note_id}/collapsed",   self._is_collapsed)
+        settings.setValue(f"{self.note_id}/title",       self._title)
+        settings.setValue(f"{self.note_id}/last_edited", self._last_edited)
         settings.endGroup()
 
     def closeEvent(self, event):

@@ -36,29 +36,83 @@ class TrayManager:
         self.tray_icon.setToolTip("Sticky Notes")
 
         self.menu = QMenu()
+        # Rebuild the whole menu each time it's shown so the dynamic note
+        # list reflects current titles, last-edited order, and open notes.
+        self.menu.aboutToShow.connect(self._rebuild_menu)
+        self._rebuild_menu()
 
-        new_note_action = QAction("New Note", parent=self.tray_icon)
-        new_note_action.triggered.connect(self._create_new_note)
+        self.tray_icon.setContextMenu(self.menu)
+        self.tray_icon.show()
+
+    def _rebuild_menu(self):
+        """(Re)build the tray menu. Note list lives under a 'Show Note' submenu
+        so the main menu stays short; the submenu itself shows newest-edited
+        first and is capped by TRAY_MENU_NOTE_LIMIT."""
+        self.menu.clear()
+
+        new_note_action = QAction("New Note", parent=self.menu)
+        new_note_action.triggered.connect(lambda _checked=False: self._create_new_note())
         self.menu.addAction(new_note_action)
 
-        show_all_action = QAction("Show All Notes", parent=self.tray_icon)
+        show_all_action = QAction("Show All Notes", parent=self.menu)
         show_all_action.triggered.connect(self._show_all_notes)
         self.menu.addAction(show_all_action)
 
-        self.menu.addSeparator()
+        # "Show Note ▶" submenu — Qt renders the arrow automatically.
+        show_note_menu = self.menu.addMenu("Show Note")
+        self._populate_show_note_submenu(show_note_menu)
 
-        settings_action = QAction("Settings...", parent=self.tray_icon)
+        self.menu.addSeparator()
+        settings_action = QAction("Settings...", parent=self.menu)
         settings_action.triggered.connect(self._show_settings)
         self.menu.addAction(settings_action)
 
         self.menu.addSeparator()
-
-        quit_action = QAction("Quit", parent=self.tray_icon)
+        quit_action = QAction("Quit", parent=self.menu)
         quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(quit_action)
 
-        self.tray_icon.setContextMenu(self.menu)
-        self.tray_icon.show()
+    def _populate_show_note_submenu(self, submenu):
+        """Fill the 'Show Note' submenu with one entry per open note, sorted
+        by last_edited descending. Empty state shows a single disabled hint."""
+        if not self.open_notes:
+            empty = QAction("(no saved notes)", parent=submenu)
+            empty.setEnabled(False)
+            submenu.addAction(empty)
+            return
+
+        notes = sorted(
+            self.open_notes.values(),
+            key=lambda n: n.last_edited or "",
+            reverse=True,
+        )
+        cap = max(0, int(config.TRAY_MENU_NOTE_LIMIT))
+        shown = notes[:cap] if cap else notes
+        for note in shown:
+            title = note.title or config.DEFAULT_NOTE_TITLE
+            # Defensive elide so a rogue long title can't blow out the menu.
+            if len(title) > config.MAX_TITLE_LENGTH:
+                title = title[: config.MAX_TITLE_LENGTH - 1] + "…"
+            action = QAction(title, parent=submenu)
+            # Bind note_id at lambda-creation time so the closure doesn't
+            # capture the loop variable's final value.
+            action.triggered.connect(
+                lambda _checked=False, nid=note.note_id: self._focus_note(nid)
+            )
+            submenu.addAction(action)
+        hidden = len(notes) - len(shown)
+        if hidden > 0:
+            more = QAction(f"+{hidden} more…", parent=submenu)
+            more.setEnabled(False)
+            submenu.addAction(more)
+
+    def _focus_note(self, note_id: str):
+        note = self.open_notes.get(note_id)
+        if note is None:
+            return
+        note.show()
+        note.raise_()
+        note.activateWindow()
 
     def _create_new_note(
         self,
@@ -67,9 +121,13 @@ class TrayManager:
         geometry_data=None,
         theme=None,
         collapsed=False,
+        title=None,
+        last_edited=None,
     ):
         theme = theme or config.DEFAULT_THEME
-        note = StickyNote(note_id, content, geometry_data, theme, collapsed)
+        note = StickyNote(
+            note_id, content, geometry_data, theme, collapsed, title, last_edited
+        )
         note.noteDeleted.connect(self._handle_note_deletion)
         note.newNoteRequested.connect(self._new_note_from_signal)
         note.show()
@@ -117,6 +175,13 @@ class TrayManager:
             theme     = settings.value(f"{note_id}/theme", config.DEFAULT_THEME)
             collapsed = settings.value(f"{note_id}/collapsed", False, type=bool)
 
+            # New fields in this schema. Both default to None so legacy notes
+            # get the "smart default" behavior in StickyNote.__init__ —
+            # title is auto-derived from existing body content, and
+            # last_edited will be filled in at first save.
+            title       = settings.value(f"{note_id}/title", None)
+            last_edited = settings.value(f"{note_id}/last_edited", None)
+
             # Prefer the QByteArray-encoded geometry (works on Wayland).
             # Fall back to (x, y, w, h) ints for notes saved during the
             # broken intermediate version where we wrote raw coords only.
@@ -129,5 +194,7 @@ class TrayManager:
                 if None not in (x, y, w, h):
                     geometry = (int(x), int(y), int(w), int(h))
 
-            self._create_new_note(note_id, content, geometry, theme, collapsed)
+            self._create_new_note(
+                note_id, content, geometry, theme, collapsed, title, last_edited
+            )
         settings.endGroup()
