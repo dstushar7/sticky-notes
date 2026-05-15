@@ -12,6 +12,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QPushButton, QGraphicsDropShadowEffect
 
+from . import config
+
 
 class FloatingButton(QPushButton):
     """A QPushButton that paints as a translucent rounded pill.
@@ -78,14 +80,13 @@ class FloatingButton(QPushButton):
             self._install_shadow()
 
     def _install_shadow(self):
-        """Soft drop shadow for the floating-chip look. Blur is kept small
-        so the shadow fits inside the title bar's vertical breathing room
-        (~5 px above/below) without being clipped; alpha is tuned so it
-        reads at a glance without darkening the bar visually."""
+        """Soft drop shadow for the floating-chip look. Profile is sourced
+        from config.SHADOW_BUTTON_CHIP so design tweaks live in one place."""
         eff = QGraphicsDropShadowEffect(self)
-        eff.setBlurRadius(6)
-        eff.setOffset(0, 2)
-        eff.setColor(QColor(0, 0, 0, 90))
+        blur, offset_y, alpha = config.SHADOW_BUTTON_CHIP
+        eff.setBlurRadius(blur)
+        eff.setOffset(0, offset_y)
+        eff.setColor(QColor(0, 0, 0, alpha))
         self.setGraphicsEffect(eff)
 
     def set_extra_css(self, extra_css: str):

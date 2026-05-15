@@ -155,8 +155,6 @@ class NoteTextEdit(QTextEdit):
 class _DeleteButton(QPushButton):
     confirmed = pyqtSignal()
 
-    CONFIRM_WINDOW_MS = 4000  # how long the armed state stays armed
-
     _IDLE_LABEL = "🗑  Delete Note"
     _ARMED_LABEL = "✓  Click again to confirm"
 
@@ -169,7 +167,7 @@ class _DeleteButton(QPushButton):
         self._armed = False
         self._disarm_timer = QTimer(self)
         self._disarm_timer.setSingleShot(True)
-        self._disarm_timer.setInterval(self.CONFIRM_WINDOW_MS)
+        self._disarm_timer.setInterval(config.DELETE_CONFIRM_WINDOW_MS)
         self._disarm_timer.timeout.connect(self._disarm)
 
         self.clicked.connect(self._on_clicked)
@@ -327,12 +325,14 @@ class OptionsPanel(QWidget):
         # (which would clobber the swatches and delete button stylesheets).
         self.setObjectName("optionsPanel")
         self.setStyleSheet(
-            "QWidget#optionsPanel { background-color: #ffffff; border-radius: 8px; }"
+            f"QWidget#optionsPanel {{ background-color: #ffffff; "
+            f"border-radius: {config.CORNER_RADIUS_PX}px; }}"
         )
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(16)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 80))
+        blur, offset_y, alpha = config.SHADOW_PANEL
+        shadow.setBlurRadius(blur)
+        shadow.setOffset(0, offset_y)
+        shadow.setColor(QColor(0, 0, 0, alpha))
         self.setGraphicsEffect(shadow)
 
 
@@ -699,12 +699,13 @@ class TitleBar(QWidget):
         self._rebuild_bar_style()
 
     def _rebuild_bar_style(self):
-        bottom_radius = 8 if self._is_collapsed_style else 0
+        r = config.CORNER_RADIUS_PX
+        bottom_radius = r if self._is_collapsed_style else 0
         self.setStyleSheet(f"""
             QWidget#titleBar {{
                 background-color: {self._title_bg};
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
+                border-top-left-radius: {r}px;
+                border-top-right-radius: {r}px;
                 border-bottom-left-radius: {bottom_radius}px;
                 border-bottom-right-radius: {bottom_radius}px;
             }}
@@ -804,11 +805,12 @@ class FormatBar(QWidget):
         font_px = max(11, int(self._btn_size * 0.45))
         font_css = f"font-size: {font_px}px;"
 
+        r = config.CORNER_RADIUS_PX
         self.setStyleSheet(f"""
             QWidget#formatBar {{
                 background-color: {bg_color};
-                border-bottom-left-radius: 8px;
-                border-bottom-right-radius: 8px;
+                border-bottom-left-radius: {r}px;
+                border-bottom-right-radius: {r}px;
             }}
         """)
         for btn in self._buttons():
@@ -872,11 +874,11 @@ class StickyNote(QWidget):
         self._drag_start_global = None
         self._drag_start_window_pos = None
 
-        # Debounced save — fires 500ms after the last move/resize so we
-        # never lose position even if the user quits abruptly.
+        # Debounced save — fires SAVE_DEBOUNCE_MS after the last move/resize
+        # so we never lose position even if the user quits abruptly.
         self._save_debounce = QTimer(self)
         self._save_debounce.setSingleShot(True)
-        self._save_debounce.setInterval(500)
+        self._save_debounce.setInterval(config.SAVE_DEBOUNCE_MS)
         self._save_debounce.timeout.connect(self._save)
 
         self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
@@ -1045,7 +1047,7 @@ class StickyNote(QWidget):
         self.bg_widget.setStyleSheet(f"""
             QWidget#noteBackground {{
                 background-color: {bg};
-                border-radius: 8px;
+                border-radius: {config.CORNER_RADIUS_PX}px;
             }}
         """)
         self.title_bar.apply_colors(title_bg, btn_color, hover_overlay, is_dark)
@@ -1126,20 +1128,22 @@ class StickyNote(QWidget):
     # ------------------------------------------------------------------
 
     def _apply_expanded_shadow(self):
-        """Roomy soft shadow for the full note. Tuned for a body window
-        whose silhouette gives the shadow plenty of geometry to drape."""
-        self._bg_shadow.setBlurRadius(24)
-        self._bg_shadow.setOffset(0, 5)
-        self._bg_shadow.setColor(QColor(0, 0, 0, 130))
+        """Roomy soft shadow for the full note. Profile sourced from
+        config.SHADOW_BODY_EXPANDED."""
+        blur, offset_y, alpha = config.SHADOW_BODY_EXPANDED
+        self._bg_shadow.setBlurRadius(blur)
+        self._bg_shadow.setOffset(0, offset_y)
+        self._bg_shadow.setColor(QColor(0, 0, 0, alpha))
 
     def _apply_collapsed_shadow(self):
         """Tighter, denser shadow used while collapsed. The body's gone so
         the shadow has to sell the 'floating pill' feel on its own — and
         a tighter blur stays within SHADOW_GUTTER instead of being clipped
         at the (now small) window edge."""
-        self._bg_shadow.setBlurRadius(14)
-        self._bg_shadow.setOffset(0, 4)
-        self._bg_shadow.setColor(QColor(0, 0, 0, 175))
+        blur, offset_y, alpha = config.SHADOW_BODY_COLLAPSED
+        self._bg_shadow.setBlurRadius(blur)
+        self._bg_shadow.setOffset(0, offset_y)
+        self._bg_shadow.setColor(QColor(0, 0, 0, alpha))
 
     def toggle_collapse(self):
         if self._is_collapsed:
