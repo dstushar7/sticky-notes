@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel,
     QLineEdit, QStackedLayout, QSizePolicy, QGraphicsDropShadowEffect,
-    QApplication, QDialog, QCheckBox,
+    QApplication, QDialog, QCheckBox, QFrame,
 )
 from PyQt6.QtCore import (
     QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray,
@@ -144,6 +144,98 @@ class NoteTextEdit(QTextEdit):
 
 
 # ---------------------------------------------------------------------------
+# _DeleteButton — destructive action with a two-click confirm pattern.
+#
+# First click arms the button: text + visual state change to "Confirm Delete?"
+# in a fully red filled style. A second click within CONFIRM_WINDOW_MS emits
+# `confirmed`; if the timeout expires (or the panel closes) the button reverts
+# to its idle state. The two states are visually distinct on purpose — the
+# armed style is loud so the user can't miss that the next click is real.
+# ---------------------------------------------------------------------------
+class _DeleteButton(QPushButton):
+    confirmed = pyqtSignal()
+
+    CONFIRM_WINDOW_MS = 4000  # how long the armed state stays armed
+
+    _IDLE_LABEL = "🗑  Delete Note"
+    _ARMED_LABEL = "✓  Click again to confirm"
+
+    def __init__(self, parent=None):
+        super().__init__(self._IDLE_LABEL, parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # No keyboard focus; this is purely a pointer action inside a popup.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        self._armed = False
+        self._disarm_timer = QTimer(self)
+        self._disarm_timer.setSingleShot(True)
+        self._disarm_timer.setInterval(self.CONFIRM_WINDOW_MS)
+        self._disarm_timer.timeout.connect(self._disarm)
+
+        self.clicked.connect(self._on_clicked)
+        self._apply_idle_style()
+
+    def _on_clicked(self):
+        if self._armed:
+            self._disarm_timer.stop()
+            self.confirmed.emit()
+        else:
+            self._arm()
+
+    def _arm(self):
+        self._armed = True
+        self.setText(self._ARMED_LABEL)
+        self._apply_armed_style()
+        self._disarm_timer.start()
+
+    def _disarm(self):
+        self._armed = False
+        self.setText(self._IDLE_LABEL)
+        self._apply_idle_style()
+
+    def _apply_idle_style(self):
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(220, 50, 60, 0.10);
+                color: #c0341d;
+                border: 1px solid rgba(220, 50, 60, 0.22);
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 10pt;
+                font-weight: 500;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: rgba(220, 50, 60, 0.18);
+                border: 1px solid rgba(220, 50, 60, 0.35);
+            }
+            QPushButton:pressed {
+                background-color: rgba(220, 50, 60, 0.28);
+            }
+        """)
+
+    def _apply_armed_style(self):
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: #d33f2f;
+                color: #ffffff;
+                border: 1px solid #b03224;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 10pt;
+                font-weight: 600;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: #c0341d;
+            }
+            QPushButton:pressed {
+                background-color: #a52a1c;
+            }
+        """)
+
+
+# ---------------------------------------------------------------------------
 # OptionsPanel — floating popup below the "..." button
 # ---------------------------------------------------------------------------
 class OptionsPanel(QWidget):
@@ -192,7 +284,7 @@ class OptionsPanel(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        layout.setSpacing(8)
 
         # Row 1 — color swatches
         swatch_row = QHBoxLayout()
@@ -217,33 +309,26 @@ class OptionsPanel(QWidget):
             swatch_row.addWidget(btn)
         layout.addLayout(swatch_row)
 
-        # Row 2 — actions
-        delete_btn = QPushButton("🗑  Delete Note")
-        delete_btn.setStyleSheet(self._action_btn_style("#cc0000"))
-        delete_btn.clicked.connect(self.deleteRequested.emit)
+        # Separator — reads as the boundary between picker and destructive action
+        separator = QFrame(self)
+        separator.setFixedHeight(1)
+        separator.setStyleSheet("background-color: rgba(0, 0, 0, 0.10);")
+        layout.addWidget(separator)
+
+        # Destructive action — two-click confirm pattern lives inside the button
+        delete_btn = _DeleteButton(self)
+        delete_btn.confirmed.connect(self.deleteRequested.emit)
         layout.addWidget(delete_btn)
 
         self.setFixedWidth(220)
 
-    @staticmethod
-    def _action_btn_style(color: str) -> str:
-        return f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {color};
-                border: none;
-                text-align: left;
-                padding: 4px 8px;
-                font-size: 10pt;
-            }}
-            QPushButton:hover {{
-                background-color: #f0f0f0;
-                border-radius: 4px;
-            }}
-        """
-
     def _apply_panel_style(self):
-        self.setStyleSheet("QWidget { background-color: #ffffff; border-radius: 8px; }")
+        # Selector-scoped so we don't accidentally restyle every QWidget child
+        # (which would clobber the swatches and delete button stylesheets).
+        self.setObjectName("optionsPanel")
+        self.setStyleSheet(
+            "QWidget#optionsPanel { background-color: #ffffff; border-radius: 8px; }"
+        )
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(16)
         shadow.setOffset(0, 4)

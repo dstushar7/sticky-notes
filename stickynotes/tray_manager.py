@@ -63,7 +63,7 @@ class TrayManager:
         self._populate_show_note_submenu(show_note_menu)
 
         self.menu.addSeparator()
-        settings_action = QAction("Settings...", parent=self.menu)
+        settings_action = QAction("Settings", parent=self.menu)
         settings_action.triggered.connect(self._show_settings)
         self.menu.addAction(settings_action)
 
