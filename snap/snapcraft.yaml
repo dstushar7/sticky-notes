@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '2.2.1'
+version: '3.0.0'
 platforms:
   amd64:
 summary: A simple and elegant sticky notes app for your desktop.

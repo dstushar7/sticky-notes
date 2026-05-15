@@ -1,9 +1,11 @@
 # stickynotes/note_window.py
 
 import uuid
+from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel,
-    QSizePolicy, QGraphicsDropShadowEffect, QApplication, QDialog, QCheckBox,
+    QLineEdit, QStackedLayout, QSizePolicy, QGraphicsDropShadowEffect,
+    QApplication, QDialog, QCheckBox, QFrame,
 )
 from PyQt6.QtCore import (
     QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray,
@@ -12,11 +14,32 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextCursor, QKeySequence, QShortcut, QFont,
+    QFontMetrics,
 )
 
 from . import config
 from . import utils
 from . import autostart
+from .widgets import FloatingButton
+
+
+def _now_iso() -> str:
+    """Timezone-aware UTC ISO-8601 timestamp used for last_edited."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def derive_title_from_text(plain_text: str) -> str:
+    """Title from the first non-empty body line, capped at AUTO_SEED_WORD_COUNT
+    words and MAX_TITLE_LENGTH characters. Falls back to DEFAULT_NOTE_TITLE."""
+    if plain_text:
+        for line in plain_text.splitlines():
+            stripped = line.strip()
+            if stripped:
+                words = stripped.split()[:config.AUTO_SEED_WORD_COUNT]
+                derived = " ".join(words)[:config.MAX_TITLE_LENGTH].strip()
+                if derived:
+                    return derived
+    return config.DEFAULT_NOTE_TITLE
 
 
 # Bullet styles cycled by sublist depth so nested levels are visually distinct.
@@ -121,6 +144,96 @@ class NoteTextEdit(QTextEdit):
 
 
 # ---------------------------------------------------------------------------
+# _DeleteButton — destructive action with a two-click confirm pattern.
+#
+# First click arms the button: text + visual state change to "Confirm Delete?"
+# in a fully red filled style. A second click within CONFIRM_WINDOW_MS emits
+# `confirmed`; if the timeout expires (or the panel closes) the button reverts
+# to its idle state. The two states are visually distinct on purpose — the
+# armed style is loud so the user can't miss that the next click is real.
+# ---------------------------------------------------------------------------
+class _DeleteButton(QPushButton):
+    confirmed = pyqtSignal()
+
+    _IDLE_LABEL = "🗑  Delete Note"
+    _ARMED_LABEL = "✓  Click again to confirm"
+
+    def __init__(self, parent=None):
+        super().__init__(self._IDLE_LABEL, parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # No keyboard focus; this is purely a pointer action inside a popup.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        self._armed = False
+        self._disarm_timer = QTimer(self)
+        self._disarm_timer.setSingleShot(True)
+        self._disarm_timer.setInterval(config.DELETE_CONFIRM_WINDOW_MS)
+        self._disarm_timer.timeout.connect(self._disarm)
+
+        self.clicked.connect(self._on_clicked)
+        self._apply_idle_style()
+
+    def _on_clicked(self):
+        if self._armed:
+            self._disarm_timer.stop()
+            self.confirmed.emit()
+        else:
+            self._arm()
+
+    def _arm(self):
+        self._armed = True
+        self.setText(self._ARMED_LABEL)
+        self._apply_armed_style()
+        self._disarm_timer.start()
+
+    def _disarm(self):
+        self._armed = False
+        self.setText(self._IDLE_LABEL)
+        self._apply_idle_style()
+
+    def _apply_idle_style(self):
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(220, 50, 60, 0.10);
+                color: #c0341d;
+                border: 1px solid rgba(220, 50, 60, 0.22);
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 10pt;
+                font-weight: 500;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: rgba(220, 50, 60, 0.18);
+                border: 1px solid rgba(220, 50, 60, 0.35);
+            }
+            QPushButton:pressed {
+                background-color: rgba(220, 50, 60, 0.28);
+            }
+        """)
+
+    def _apply_armed_style(self):
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: #d33f2f;
+                color: #ffffff;
+                border: 1px solid #b03224;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 10pt;
+                font-weight: 600;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: #c0341d;
+            }
+            QPushButton:pressed {
+                background-color: #a52a1c;
+            }
+        """)
+
+
+# ---------------------------------------------------------------------------
 # OptionsPanel — floating popup below the "..." button
 # ---------------------------------------------------------------------------
 class OptionsPanel(QWidget):
@@ -146,6 +259,11 @@ class OptionsPanel(QWidget):
             Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint,
         )
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # Give the popup an alpha channel so the four corners outside the
+        # 8 px border-radius become genuinely transparent, instead of the
+        # default opaque widget background that otherwise frames the panel
+        # with four dark dots.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._dismissed = False
         self._current_theme = current_theme
         self._setup_ui()
@@ -164,7 +282,7 @@ class OptionsPanel(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        layout.setSpacing(8)
 
         # Row 1 — color swatches
         swatch_row = QHBoxLayout()
@@ -189,63 +307,309 @@ class OptionsPanel(QWidget):
             swatch_row.addWidget(btn)
         layout.addLayout(swatch_row)
 
-        # Row 2 — actions
-        delete_btn = QPushButton("🗑  Delete Note")
-        delete_btn.setStyleSheet(self._action_btn_style("#cc0000"))
-        delete_btn.clicked.connect(self.deleteRequested.emit)
+        # Separator — reads as the boundary between picker and destructive action
+        separator = QFrame(self)
+        separator.setFixedHeight(1)
+        separator.setStyleSheet("background-color: rgba(0, 0, 0, 0.10);")
+        layout.addWidget(separator)
+
+        # Destructive action — two-click confirm pattern lives inside the button
+        delete_btn = _DeleteButton(self)
+        delete_btn.confirmed.connect(self.deleteRequested.emit)
         layout.addWidget(delete_btn)
 
         self.setFixedWidth(220)
 
-    @staticmethod
-    def _action_btn_style(color: str) -> str:
-        return f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {color};
-                border: none;
-                text-align: left;
-                padding: 4px 8px;
-                font-size: 10pt;
-            }}
-            QPushButton:hover {{
-                background-color: #f0f0f0;
-                border-radius: 4px;
-            }}
-        """
-
     def _apply_panel_style(self):
-        self.setStyleSheet("QWidget { background-color: #ffffff; border-radius: 8px; }")
+        # Selector-scoped so we don't accidentally restyle every QWidget child
+        # (which would clobber the swatches and delete button stylesheets).
+        self.setObjectName("optionsPanel")
+        self.setStyleSheet(
+            f"QWidget#optionsPanel {{ background-color: #ffffff; "
+            f"border-radius: {config.CORNER_RADIUS_PX}px; }}"
+        )
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(16)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 80))
+        blur, offset_y, alpha = config.SHADOW_PANEL
+        shadow.setBlurRadius(blur)
+        shadow.setOffset(0, offset_y)
+        shadow.setColor(QColor(0, 0, 0, alpha))
         self.setGraphicsEffect(shadow)
 
 
 # ---------------------------------------------------------------------------
-# DragHandle — transparent spacer in the title bar.
-# Drag and release are handled by StickyNote.eventFilter so the top-level
-# window calls self.move() directly (more reliable than doing it from a child).
-# Only double-click is handled here because it's a discrete gesture that
-# doesn't need the event-filter machinery.
+# EditableTitleLabel — read-only label that swaps to a QLineEdit on click.
+#
+# Behavior:
+#   - Single-click on the visible label (when editable) → enter edit mode.
+#   - Enter or focus-loss → commit via the `committed(str)` signal.
+#   - Escape → cancel without emitting.
+#   - set_editable(False) commits any in-progress edit and disables click +
+#     hover affordance — used when the note is collapsed.
+#
+# Layout: QStackedLayout swaps a QLabel (display) with a QLineEdit (edit).
+# Mouse-event consumption is intentional: we install ourselves as an event
+# filter on the inner label so single-click is captured before propagating
+# back to StickyNote's resize/drag filter.
+# ---------------------------------------------------------------------------
+class EditableTitleLabel(QWidget):
+    committed = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("titlePill")
+        # Pill sizes to its text content, never overflows. Stacked layout's
+        # contentsMargins give the pill its horizontal padding.
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+        self._editable = True
+        self._current_text = ""
+        self._text_color = "#555555"
+        self._hover_overlay = "rgba(0, 0, 0, 0.12)"
+
+        self._stack = QStackedLayout(self)
+        self._stack.setContentsMargins(8, 2, 8, 2)
+
+        self._label = QLabel("")
+        self._label.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+        )
+        self._label.setCursor(Qt.CursorShape.IBeamCursor)
+        self._label.installEventFilter(self)
+
+        self._edit = QLineEdit("")
+        self._edit.setMaxLength(config.MAX_TITLE_LENGTH)
+        self._edit.setFrame(False)
+        self._edit.installEventFilter(self)
+        self._edit.editingFinished.connect(self._on_editing_finished)
+
+        self._stack.addWidget(self._label)
+        self._stack.addWidget(self._edit)
+        self._stack.setCurrentIndex(0)
+
+    # ---- Public API ---------------------------------------------------
+
+    def set_text(self, text: str):
+        self._current_text = text
+        self._update_display()
+        self.updateGeometry()  # sizeHint changed, ask layout to re-measure
+
+    def current_text(self) -> str:
+        return self._current_text
+
+    def set_editable(self, editable: bool):
+        """Toggle the click-to-edit affordance. Used to disable rename while
+        the note is collapsed; force-commits any in-progress edit on lock."""
+        if self._editable == editable:
+            return
+        self._editable = editable
+        if not editable and self._stack.currentIndex() == 1:
+            # Force-commit before locking so the user doesn't lose typing
+            self._on_editing_finished()
+        self._label.setCursor(
+            Qt.CursorShape.IBeamCursor if editable else Qt.CursorShape.ArrowCursor
+        )
+        self._apply_pill_style()
+
+    def is_editing(self) -> bool:
+        return self._stack.currentIndex() == 1
+
+    def apply_text_style(self, text_color: str, hover_overlay: str):
+        """Style the pill and its text content. Hover/edit states show the
+        overlay color; idle state is fully transparent so the title text
+        sits flush on the title bar background."""
+        self._text_color = text_color
+        self._hover_overlay = hover_overlay
+        text_qss = (
+            f"color: {text_color}; background-color: transparent;"
+            f"font-size: 10pt; font-weight: 600;"
+        )
+        self._label.setStyleSheet(f"QLabel {{ {text_qss} }}")
+        self._edit.setStyleSheet(
+            f"QLineEdit {{ {text_qss} border: none; padding: 0px; "
+            f"selection-background-color: {text_color}; "
+            f"selection-color: white; }}"
+        )
+        self._apply_pill_style()
+
+    def _apply_pill_style(self):
+        """(Re)compute the pill background. Hidden when collapsed; hover-only
+        when display mode; always-on when editing."""
+        if not self._editable:
+            # Collapsed → no pill, no hover. Just plain text on title bar.
+            self.setStyleSheet(
+                "QWidget#titlePill { background-color: transparent; "
+                "border-radius: 10px; }"
+            )
+            return
+        if self.is_editing():
+            # Active edit → keep the pill visible the whole time
+            self.setStyleSheet(
+                f"QWidget#titlePill {{ background-color: {self._hover_overlay}; "
+                f"border-radius: 10px; }}"
+            )
+            return
+        # Display mode, clickable → reveal pill only on hover
+        self.setStyleSheet(
+            "QWidget#titlePill {"
+            " background-color: transparent; border-radius: 10px; }"
+            f" QWidget#titlePill:hover {{ background-color: {self._hover_overlay}; }}"
+        )
+
+    # ---- Event handling ----------------------------------------------
+
+    def eventFilter(self, obj, event):
+        if obj is self._label:
+            if (event.type() == QEvent.Type.MouseButtonPress
+                    and event.button() == Qt.MouseButton.LeftButton):
+                if self._editable:
+                    self._enter_edit_mode()
+                    return True
+        elif obj is self._edit:
+            if (event.type() == QEvent.Type.KeyPress
+                    and event.key() == Qt.Key.Key_Escape):
+                self._cancel_edit()
+                return True
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_display()
+
+    # ---- Mode transitions --------------------------------------------
+
+    def _enter_edit_mode(self):
+        self._edit.setText(self._current_text)
+        self._stack.setCurrentIndex(1)
+        self._apply_pill_style()
+        self._edit.setFocus(Qt.FocusReason.MouseFocusReason)
+        self._edit.selectAll()
+
+    def _on_editing_finished(self):
+        # Fires on Enter and on focus-loss. Re-entrancy-safe via the
+        # currentIndex check (cancel already switched us back to display).
+        if self._stack.currentIndex() != 1:
+            return
+        new_text = self._edit.text()
+        self._stack.setCurrentIndex(0)
+        self._update_display()
+        self._apply_pill_style()
+        self.committed.emit(new_text)
+
+    def _cancel_edit(self):
+        if self._stack.currentIndex() != 1:
+            return
+        # Block signals so the focus-out from the hide() doesn't fire
+        # editingFinished and re-trigger a commit on the unchanged text.
+        self._edit.blockSignals(True)
+        self._stack.setCurrentIndex(0)
+        self._edit.blockSignals(False)
+        self._update_display()
+        self._apply_pill_style()
+
+    def _update_display(self):
+        text = self._current_text
+        if not text:
+            self._label.setText("")
+            self._label.setToolTip("")
+            return
+        metrics = QFontMetrics(self._label.font())
+        m = self._stack.contentsMargins()
+        avail = self.width() - m.left() - m.right() - 2
+        if avail <= 0:
+            # First paint, layout not settled — show full text; resizeEvent
+            # will re-run this once we have a real width.
+            self._label.setText(text)
+        elif metrics.horizontalAdvance(text) <= avail:
+            self._label.setText(text)
+        else:
+            self._label.setText(
+                metrics.elidedText(text, Qt.TextElideMode.ElideRight, max(20, avail))
+            )
+        self._label.setToolTip(text)
+
+    def sizeHint(self) -> QSize:
+        """Pill sizes to its text. We compute this ourselves (rather than
+        letting QLabel.sizeHint drive it) so that eliding the label text
+        doesn't feed back into our own sizeHint and cause an infinite
+        shrink loop in the layout."""
+        metrics = QFontMetrics(self._label.font())
+        text_w = metrics.horizontalAdvance(self._current_text or " ")
+        m = self._stack.contentsMargins()
+        return QSize(
+            text_w + m.left() + m.right() + 2,
+            metrics.height() + m.top() + m.bottom(),
+        )
+
+    def minimumSizeHint(self) -> QSize:
+        metrics = QFontMetrics(self._label.font())
+        m = self._stack.contentsMargins()
+        return QSize(
+            24 + m.left() + m.right(),
+            metrics.height() + m.top() + m.bottom(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# DragHandle — title-bar grab strip housing the editable title.
+#
+# Layout: [EditableTitleLabel (pill, sized to text)] [drag area (fills rest)]
+#
+# The title pill claims only as much width as its text needs (Maximum size
+# policy). The remainder of the strip is the drag area — an expanding,
+# mouse-transparent QWidget so clicks pass through to DragHandle itself,
+# which is what StickyNote.eventFilter watches for drag start, and what
+# our own mouseDoubleClickEvent uses for collapse. Result: drag and
+# double-click work across almost the whole title bar; click-to-rename
+# is only triggered on the pill.
 # ---------------------------------------------------------------------------
 class DragHandle(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("dragHandle")
+        # QWidget subclasses don't paint their stylesheet background unless
+        # this attribute is set — without it, the parent's color leaks
+        # through and the title bar looks like the body color.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # Title label — auto-derived from the first non-empty line of content.
-        # Transparent to mouse events so drag/double-click still go to DragHandle.
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 0, 8, 0)
         layout.setSpacing(0)
-        self.title_label = QLabel("")
-        self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.title_label.setAlignment(
-            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+
+        self.title_widget = EditableTitleLabel(self)
+        layout.addWidget(self.title_widget, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # Drag/collapse grab area — fills all remaining horizontal space.
+        # Mouse-transparent so clicks reach DragHandle itself.
+        self._drag_area = QWidget(self)
+        self._drag_area.setObjectName("dragArea")
+        self._drag_area.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        layout.addWidget(self.title_label)
+        self._drag_area.setMinimumWidth(config.TITLE_DRAG_SPACER_WIDTH)
+        self._drag_area.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        # WA_StyledBackground forces Qt to honor a setStyleSheet background
+        # on this widget. Without it, on some platform/style combinations
+        # Qt paints the system palette window color for a plain QWidget
+        # regardless of stylesheet cascade from the parent.
+        self._drag_area.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True
+        )
+        layout.addWidget(self._drag_area)
+
+    def apply_bg(self, color: str):
+        """Paint both surfaces of the drag handle in the title-bar color.
+        Each widget is styled directly (not via a parent-cascade rule),
+        because cascading background-color from a parent stylesheet to a
+        plain QWidget child is unreliable across Qt themes."""
+        self.setStyleSheet(
+            f"QWidget#dragHandle {{ background-color: {color}; }}"
+        )
+        self._drag_area.setStyleSheet(
+            f"QWidget#dragArea {{ background-color: {color}; }}"
+        )
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -263,80 +627,97 @@ class DragHandle(QWidget):
 class TitleBar(QWidget):
     newNoteRequested = pyqtSignal()
     optionsRequested = pyqtSignal()
+    titleCommitted = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("titleBar")
+        # QWidget subclasses need this to honor a stylesheet background-color.
+        # Otherwise the parent (bg_widget) paints the body color through us.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(config.TITLE_BAR_HEIGHT)
+        # Style state — kept so set_collapsed_style and apply_colors can
+        # re-emit the stylesheet without re-passing every parameter.
+        self._title_bg = "#F9E44A"
+        self._is_collapsed_style = False
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(4)  # tiny breathing room between chip buttons and pill
 
-        self.add_btn = QPushButton("+")
-        self.add_btn.setFixedSize(32, 32)
+        self.add_btn = FloatingButton(
+            "+",
+            tone=FloatingButton.Tone.TITLE_BAR,
+            font_css="font-size: 16pt;",
+        )
         self.add_btn.clicked.connect(self.newNoteRequested.emit)
         layout.addWidget(self.add_btn)
 
         self.drag_handle = DragHandle(self)
+        self.drag_handle.title_widget.committed.connect(self.titleCommitted.emit)
         layout.addWidget(self.drag_handle)
 
-        self.opts_btn = QPushButton("•••")
-        self.opts_btn.setFixedSize(32, 32)
+        self.opts_btn = FloatingButton(
+            "•••",
+            tone=FloatingButton.Tone.TITLE_BAR,
+            font_css="font-size: 10pt;",
+        )
         self.opts_btn.clicked.connect(self.optionsRequested.emit)
         layout.addWidget(self.opts_btn)
 
-    def apply_colors(self, title_bg: str, btn_color: str = "#555555",
-                     hover_overlay: str = "rgba(0, 0, 0, 0.12)"):
-        """Restyle title bar and its buttons with the given colors."""
+    def apply_colors(self, title_bg: str, btn_color: str, hover_overlay: str,
+                     is_dark_theme: bool):
+        """Restyle the title bar surface, its buttons, and the title pill.
+
+        - title_bg: bar background color (theme["title"])
+        - btn_color: text/icon color for buttons and the title pill
+        - hover_overlay: overlay used by the title pill on hover/edit
+        - is_dark_theme: forwarded to FloatingButton so it picks the
+          dark-glass token set on charcoal
+        """
         self._title_bg = title_bg
         self._btn_color = btn_color
+        self._rebuild_bar_style()
+        FloatingButton.apply_theme_to_all(
+            (self.add_btn, self.opts_btn), btn_color, is_dark_theme
+        )
+        # DragHandle owns the styling for both its own surface and the inner
+        # drag-area widget (parent-cascade isn't reliable, so each widget
+        # is given its own stylesheet directly).
+        self.drag_handle.apply_bg(title_bg)
+        self.drag_handle.title_widget.apply_text_style(btn_color, hover_overlay)
+
+    def set_collapsed_style(self, collapsed: bool):
+        """Switch the bar between 'top of a note' shape (rounded top only) and
+        'self-contained pill' shape (rounded all corners) used while the
+        note is collapsed."""
+        if self._is_collapsed_style == collapsed:
+            return
+        self._is_collapsed_style = collapsed
+        self._rebuild_bar_style()
+
+    def _rebuild_bar_style(self):
+        r = config.CORNER_RADIUS_PX
+        bottom_radius = r if self._is_collapsed_style else 0
         self.setStyleSheet(f"""
             QWidget#titleBar {{
-                background-color: {title_bg};
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
+                background-color: {self._title_bg};
+                border-top-left-radius: {r}px;
+                border-top-right-radius: {r}px;
+                border-bottom-left-radius: {bottom_radius}px;
+                border-bottom-right-radius: {bottom_radius}px;
             }}
         """)
-        btn_style = f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-radius: 4px;
-                color: {btn_color};
-            }}
-            QPushButton:hover {{
-                background-color: {hover_overlay};
-            }}
-        """
-        self.add_btn.setStyleSheet(btn_style + "QPushButton { font-size: 16pt; }")
-        self.opts_btn.setStyleSheet(btn_style + "QPushButton { font-size: 10pt; }")
-        # Drag handle background; title label inherits theme color
-        self.drag_handle.setStyleSheet(
-            f"background-color: {title_bg};"
-        )
-        self.drag_handle.title_label.setStyleSheet(
-            f"color: {btn_color}; background-color: transparent; "
-            f"font-size: 10pt; font-weight: 600;"
-        )
 
     def set_title_text(self, text: str):
-        """Set (and elide) the auto-derived title displayed in the drag handle."""
-        self._full_title = text
-        label = self.drag_handle.title_label
-        avail = max(20, label.width() - 12)
-        from PyQt6.QtGui import QFontMetrics
-        metrics = QFontMetrics(label.font())
-        label.setText(metrics.elidedText(text, Qt.TextElideMode.ElideRight, avail))
-        label.setToolTip(text if text else "")
+        """Render the title text in the drag handle (eliding handled inside)."""
+        self.drag_handle.title_widget.set_text(text)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Re-elide the title for the new available width
-        if hasattr(self, "_full_title"):
-            self.set_title_text(self._full_title)
+    def set_title_editable(self, editable: bool):
+        """Lock/unlock click-to-rename. Used when the note is collapsed."""
+        self.drag_handle.title_widget.set_editable(editable)
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +736,8 @@ class FormatBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("formatBar")
+        # QWidget subclasses need this to honor a stylesheet background-color.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._btn_size = self.BTN_DEFAULT
         self._last_colors = None    # remembered for re-apply after resize
         self._setup_ui()
@@ -365,12 +748,12 @@ class FormatBar(QWidget):
         layout.setContentsMargins(6, 3, 6, 3)
         layout.setSpacing(3)
 
-        self.bold_btn      = self._make_btn("B", "boldBtn")
-        self.italic_btn    = self._make_btn("I", "italicBtn")
-        self.underline_btn = self._make_btn("U", "underlineBtn")
-        self.strike_btn    = self._make_btn("S", "strikeBtn")
+        self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: bold;")
+        self.italic_btn    = self._make_btn("I", "italicBtn",    "font-style: italic;")
+        self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline;")
+        self.strike_btn    = self._make_btn("S", "strikeBtn",    "text-decoration: line-through;")
         # Bullet button uses a painted icon (set in apply_colors); empty text
-        self.bullet_btn    = self._make_btn("", "bulletBtn")
+        self.bullet_btn    = self._make_btn("", "bulletBtn",     "")
 
         layout.addStretch()
         for btn in self._buttons():
@@ -388,13 +771,14 @@ class FormatBar(QWidget):
                 self.strike_btn, self.bullet_btn)
 
     @staticmethod
-    def _make_btn(label: str, name: str) -> QPushButton:
-        btn = QPushButton(label)
+    def _make_btn(label: str, name: str, extra_css: str) -> FloatingButton:
+        btn = FloatingButton(
+            label,
+            tone=FloatingButton.Tone.TOOLBAR,
+            checkable=True,
+            extra_css=extra_css,
+        )
         btn.setObjectName(name)
-        btn.setCheckable(True)
-        # Don't steal keyboard focus from QTextEdit; otherwise pressing a
-        # button shifts focus and Ctrl+B/I/U shortcuts stop working.
-        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         return btn
 
     def apply_size(self, btn_size: int):
@@ -408,47 +792,31 @@ class FormatBar(QWidget):
         self.setFixedHeight(btn_size + 6)
         for btn in self._buttons():
             btn.setFixedSize(btn_size, btn_size)
-        # Re-apply theme so font sizes inside the stylesheet pick up the new size
+        # Re-apply theme so font sizes and the bullet icon pick up the new size
         if self._last_colors is not None:
             self.apply_colors(*self._last_colors)
 
-    def apply_colors(self, bg_color: str, btn_color: str, hover_overlay: str,
-                     active_overlay: str):
-        """Restyle bar and buttons. active_overlay = checked-state background."""
-        self._last_colors = (bg_color, btn_color, hover_overlay, active_overlay)
+    def apply_colors(self, bg_color: str, btn_color: str, is_dark_theme: bool):
+        """Restyle the bar surface, all five buttons (via FloatingButton),
+        and the bullet button's painted icon."""
+        self._last_colors = (bg_color, btn_color, is_dark_theme)
 
-        # Font sizes scale with button size
-        font_px = max(11, int(self._btn_size * 0.45))      # ~13 at btn 30
-        bullet_px = max(15, int(self._btn_size * 0.65))    # ~19 at btn 30
+        # Font size scales with button size — ~13 at btn 30, ~20 at btn 44
+        font_px = max(11, int(self._btn_size * 0.45))
+        font_css = f"font-size: {font_px}px;"
 
+        r = config.CORNER_RADIUS_PX
         self.setStyleSheet(f"""
             QWidget#formatBar {{
                 background-color: {bg_color};
-                border-bottom-left-radius: 8px;
-                border-bottom-right-radius: 8px;
+                border-bottom-left-radius: {r}px;
+                border-bottom-right-radius: {r}px;
             }}
         """)
-        common = f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-radius: 4px;
-                color: {btn_color};
-                font-size: {font_px}px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_overlay};
-            }}
-            QPushButton:checked {{
-                background-color: {active_overlay};
-            }}
-        """
-        # Per-button font styling so each button visually shows its action
-        self.bold_btn.setStyleSheet(common + "QPushButton { font-weight: bold; }")
-        self.italic_btn.setStyleSheet(common + "QPushButton { font-style: italic; }")
-        self.underline_btn.setStyleSheet(common + "QPushButton { text-decoration: underline; }")
-        self.strike_btn.setStyleSheet(common + "QPushButton { text-decoration: line-through; }")
-        self.bullet_btn.setStyleSheet(common)
+        for btn in self._buttons():
+            btn.set_font_css(font_css)
+        FloatingButton.apply_theme_to_all(self._buttons(), btn_color, is_dark_theme)
+
         # Painted bullet-list icon, recolored to match the current btn_color
         icon_px = max(14, int(self._btn_size * 0.7))
         self.bullet_btn.setIcon(utils.create_bullet_list_icon(btn_color, icon_px))
@@ -460,7 +828,8 @@ class FormatBar(QWidget):
 # ---------------------------------------------------------------------------
 class StickyNote(QWidget):
     noteDeleted = pyqtSignal(str)
-    newNoteRequested = pyqtSignal(str)   # emits theme_name
+    newNoteRequested = pyqtSignal(str)        # emits theme_name
+    titleChanged = pyqtSignal(str, str)        # emits (note_id, new_title)
 
     def __init__(
         self,
@@ -469,6 +838,8 @@ class StickyNote(QWidget):
         geometry_data=None,
         theme=config.DEFAULT_THEME,
         collapsed=False,
+        title=None,
+        last_edited=None,
         parent=None,
     ):
         super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
@@ -485,6 +856,13 @@ class StickyNote(QWidget):
         self._options_panel = None
         self._anim_group = None
 
+        # Title state. A missing `title` (None) marks this note as "still on
+        # the smart default" — body edits will keep refreshing the displayed
+        # title from the first body line until the user commits a custom one.
+        self._title_is_default = (title is None)
+        self._title = title or config.DEFAULT_NOTE_TITLE
+        self._last_edited = last_edited or _now_iso()
+
         # Resize tracking
         self._resize_zone = _NONE
         self._is_resizing = False
@@ -496,11 +874,11 @@ class StickyNote(QWidget):
         self._drag_start_global = None
         self._drag_start_window_pos = None
 
-        # Debounced save — fires 500ms after the last move/resize so we
-        # never lose position even if the user quits abruptly.
+        # Debounced save — fires SAVE_DEBOUNCE_MS after the last move/resize
+        # so we never lose position even if the user quits abruptly.
         self._save_debounce = QTimer(self)
         self._save_debounce.setSingleShot(True)
-        self._save_debounce.setInterval(500)
+        self._save_debounce.setInterval(config.SAVE_DEBOUNCE_MS)
         self._save_debounce.timeout.connect(self._save)
 
         self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
@@ -548,8 +926,18 @@ class StickyNote(QWidget):
                 self.text_edit.setHtml(content)
             else:
                 self.text_edit.setPlainText(content)
-        # Initial title (also covers the empty-content "New note" case)
-        self._refresh_title()
+
+        # Seed the title from body if still on the smart default — covers
+        # both brand-new notes (empty body → DEFAULT_NOTE_TITLE) and legacy
+        # notes loaded without a stored title (derive from existing body so
+        # the user sees the same identity they had before the upgrade).
+        if self._title_is_default:
+            self._title = derive_title_from_text(self.text_edit.toPlainText())
+        self._refresh_title_display()
+
+        # Only now connect body-edit tracking — keeps the initial setHtml
+        # from being treated as a user edit.
+        self.text_edit.textChanged.connect(self._on_body_changed)
 
         if collapsed:
             QTimer.singleShot(0, self._collapse_immediately)
@@ -579,6 +967,7 @@ class StickyNote(QWidget):
             lambda: self.newNoteRequested.emit(self._theme_name)
         )
         self.title_bar.optionsRequested.connect(self._show_options_panel)
+        self.title_bar.titleCommitted.connect(self._on_title_committed)
         bg_layout.addWidget(self.title_bar)
 
         self.text_edit = NoteTextEdit(self.bg_widget)
@@ -604,16 +993,19 @@ class StickyNote(QWidget):
         self.text_edit.currentCharFormatChanged.connect(
             lambda _fmt: self._refresh_format_bar()
         )
-        # Auto-derive title from first non-empty line of content
-        self.text_edit.textChanged.connect(self._refresh_title)
+        # Body-edit handler is wired AFTER the initial content load in
+        # __init__ so the load itself doesn't bump last_edited or trigger
+        # spurious title derivation.
 
         outer.addWidget(self.bg_widget)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(24)
-        shadow.setOffset(0, 5)
-        shadow.setColor(QColor(0, 0, 0, 130))
-        self.bg_widget.setGraphicsEffect(shadow)
+        # Body drop shadow. Kept as an instance attribute so collapse/expand
+        # can swap to a tighter, denser shadow profile when the note shrinks
+        # to just the title bar (where the bigger expanded shadow gets clipped
+        # by the window edge and the bar reads as having a harsh bottom).
+        self._bg_shadow = QGraphicsDropShadowEffect(self)
+        self.bg_widget.setGraphicsEffect(self._bg_shadow)
+        self._apply_expanded_shadow()
 
     def _setup_shortcuts(self):
         # QTextEdit doesn't bind Ctrl+B/I/U on its own — wire them explicitly.
@@ -651,16 +1043,15 @@ class StickyNote(QWidget):
         is_dark = text_color == "#f0f0f0"
         btn_color = "#cccccc" if is_dark else "#555555"
         hover_overlay = "rgba(255, 255, 255, 0.18)" if is_dark else "rgba(0, 0, 0, 0.12)"
-        active_overlay = "rgba(255, 255, 255, 0.28)" if is_dark else "rgba(0, 0, 0, 0.20)"
 
         self.bg_widget.setStyleSheet(f"""
             QWidget#noteBackground {{
                 background-color: {bg};
-                border-radius: 8px;
+                border-radius: {config.CORNER_RADIUS_PX}px;
             }}
         """)
-        self.title_bar.apply_colors(title_bg, btn_color, hover_overlay)
-        self.format_bar.apply_colors(title_bg, btn_color, hover_overlay, active_overlay)
+        self.title_bar.apply_colors(title_bg, btn_color, hover_overlay, is_dark)
+        self.format_bar.apply_colors(title_bg, btn_color, is_dark)
         self.text_edit.setStyleSheet(f"""
             NoteTextEdit {{
                 background-color: transparent;
@@ -736,6 +1127,24 @@ class StickyNote(QWidget):
     # Collapse / expand
     # ------------------------------------------------------------------
 
+    def _apply_expanded_shadow(self):
+        """Roomy soft shadow for the full note. Profile sourced from
+        config.SHADOW_BODY_EXPANDED."""
+        blur, offset_y, alpha = config.SHADOW_BODY_EXPANDED
+        self._bg_shadow.setBlurRadius(blur)
+        self._bg_shadow.setOffset(0, offset_y)
+        self._bg_shadow.setColor(QColor(0, 0, 0, alpha))
+
+    def _apply_collapsed_shadow(self):
+        """Tighter, denser shadow used while collapsed. The body's gone so
+        the shadow has to sell the 'floating pill' feel on its own — and
+        a tighter blur stays within SHADOW_GUTTER instead of being clipped
+        at the (now small) window edge."""
+        blur, offset_y, alpha = config.SHADOW_BODY_COLLAPSED
+        self._bg_shadow.setBlurRadius(blur)
+        self._bg_shadow.setOffset(0, offset_y)
+        self._bg_shadow.setColor(QColor(0, 0, 0, alpha))
+
     def toggle_collapse(self):
         if self._is_collapsed:
             self._expand()
@@ -745,6 +1154,14 @@ class StickyNote(QWidget):
     def _collapse(self):
         self._pre_collapse_height = self.height()
         self._is_collapsed = True
+        # Lock title editing while collapsed — committing first so any
+        # in-progress rename isn't silently dropped.
+        self.title_bar.set_title_editable(False)
+        # Round all four title-bar corners and swap to the dense floating-
+        # pill shadow so the bottom of the collapsed note reads as a soft
+        # rounded edge, not a hard cut.
+        self.title_bar.set_collapsed_style(True)
+        self._apply_collapsed_shadow()
 
         # Allow window to shrink below its normal minimum
         self.setMinimumHeight(0)
@@ -773,6 +1190,12 @@ class StickyNote(QWidget):
     def _expand(self):
         self._is_collapsed = False
         target_h = max(self._pre_collapse_height, config.MIN_NOTE_HEIGHT)
+        # Re-enable title click-to-rename now that the body is back.
+        self.title_bar.set_title_editable(True)
+        # Square off the title bar's bottom corners and restore the larger
+        # body shadow — the body is about to reappear behind it.
+        self.title_bar.set_collapsed_style(False)
+        self._apply_expanded_shadow()
 
         self.text_edit.show()
         self.format_bar.show()
@@ -798,6 +1221,9 @@ class StickyNote(QWidget):
         """Apply collapsed state on load without animation."""
         collapsed_h = config.TITLE_BAR_HEIGHT + 2 * config.SHADOW_GUTTER
         self._is_collapsed = True
+        self.title_bar.set_title_editable(False)
+        self.title_bar.set_collapsed_style(True)
+        self._apply_collapsed_shadow()
         self.text_edit.hide()
         self.format_bar.hide()
         self.setMinimumHeight(0)
@@ -850,14 +1276,44 @@ class StickyNote(QWidget):
         self.format_bar.strike_btn.setChecked(fmt.fontStrikeOut())
         self.format_bar.bullet_btn.setChecked(cursor.currentList() is not None)
 
-    def _refresh_title(self):
-        """Set the title-bar label from the first non-empty line of content."""
-        text = self.text_edit.toPlainText()
-        first = next(
-            (line.strip() for line in text.splitlines() if line.strip()),
-            "New note",
-        )
-        self.title_bar.set_title_text(first)
+    def _refresh_title_display(self):
+        """Push the current `_title` value to the title bar."""
+        self.title_bar.set_title_text(self._title)
+
+    def _on_body_changed(self):
+        """Body content changed via user input. Updates last_edited and,
+        while the title is still on the smart default, re-derives the
+        displayed title from the first body line."""
+        self._last_edited = _now_iso()
+        if self._title_is_default:
+            new_title = derive_title_from_text(self.text_edit.toPlainText())
+            if new_title != self._title:
+                self._title = new_title
+                self._refresh_title_display()
+                self.titleChanged.emit(self.note_id, self._title)
+        # Debounce save so a typing burst doesn't spam QSettings
+        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
+            self._save_debounce.start()
+
+    def _on_title_committed(self, raw_text: str):
+        """Slot for the title bar's QLineEdit commit. Trims, caps length,
+        ignores empty-input commits (keeps previous title), and locks the
+        smart-default flag once a custom title is accepted."""
+        cleaned = raw_text.strip()[:config.MAX_TITLE_LENGTH]
+        if not cleaned:
+            # Empty/whitespace → revert to previous title (refresh display
+            # in case the QLineEdit briefly displayed the empty string)
+            self._refresh_title_display()
+            return
+        if cleaned == self._title and not self._title_is_default:
+            return  # no-op commit
+        self._title = cleaned
+        self._title_is_default = False
+        self._last_edited = _now_iso()
+        self._refresh_title_display()
+        self.titleChanged.emit(self.note_id, self._title)
+        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
+            self._save_debounce.start()
 
     def _remove_list(self, cursor: QTextCursor):
         start = cursor.selectionStart()
@@ -1039,18 +1495,29 @@ class StickyNote(QWidget):
     # Persistence
     # ------------------------------------------------------------------
 
+    # Read-only accessors used by TrayManager when building its menu
+    @property
+    def title(self) -> str:
+        return self._title
+
+    @property
+    def last_edited(self) -> str:
+        return self._last_edited
+
     def _save(self):
         if self._is_being_deleted:
             return
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
-        settings.setValue(f"{self.note_id}/content",   self.text_edit.toHtml())
+        settings.setValue(f"{self.note_id}/content",     self.text_edit.toHtml())
         # Use Qt's encoded geometry — this is the path Wayland compositors
         # honor at window mapping. Manual x/y/w/h via move() doesn't work
         # because Wayland forbids apps from positioning themselves.
-        settings.setValue(f"{self.note_id}/geometry",  self.saveGeometry())
-        settings.setValue(f"{self.note_id}/theme",     self._theme_name)
-        settings.setValue(f"{self.note_id}/collapsed", self._is_collapsed)
+        settings.setValue(f"{self.note_id}/geometry",    self.saveGeometry())
+        settings.setValue(f"{self.note_id}/theme",       self._theme_name)
+        settings.setValue(f"{self.note_id}/collapsed",   self._is_collapsed)
+        settings.setValue(f"{self.note_id}/title",       self._title)
+        settings.setValue(f"{self.note_id}/last_edited", self._last_edited)
         settings.endGroup()
 
     def closeEvent(self, event):

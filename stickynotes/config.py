@@ -13,7 +13,7 @@ THEMES = {
     "charcoal": {"bg": "#4A4A4A", "title": "#333333", "text": "#f0f0f0"},
 }
 DEFAULT_THEME = "yellow"
-TITLE_BAR_HEIGHT = 32
+TITLE_BAR_HEIGHT = 38           # taller bar gives the floating chip buttons room to cast a shadow
 SHADOW_GUTTER = 12          # transparent margin for the drop shadow
 RESIZE_ZONE = 16            # >= SHADOW_GUTTER so resize grip reaches the visible note edge
 MIN_NOTE_WIDTH = 160
@@ -23,6 +23,35 @@ FONT_FAMILY = "Segoe UI, Ubuntu, Sans Serif"
 FONT_SIZE = 13
 COLLAPSE_ANIMATION_MS = 150
 LIST_INDENT_PX = 18         # bullet/sublist indent (Qt default is 40)
+
+# Note titles
+DEFAULT_NOTE_TITLE = "New Note"
+MAX_TITLE_LENGTH = 40       # strict cap; enforced by the QLineEdit and tray menu
+AUTO_SEED_WORD_COUNT = 2    # words pulled from the first body line as the smart default
+TITLE_DRAG_SPACER_WIDTH = 40  # reserved drag/collapse grab area on the right of the title
+
+# Tray menu
+TRAY_MENU_NOTE_LIMIT = 10   # max number of notes listed in the tray menu
+
+# Persistence timing
+SAVE_DEBOUNCE_MS = 500       # delay after the last move/resize before flushing to QSettings
+
+# Delete confirmation
+DELETE_CONFIRM_WINDOW_MS = 4000   # how long the "armed" state stays armed before reverting
+
+# Shape tokens
+CORNER_RADIUS_PX = 8         # rounded-corner radius used by the note body, title bar, panels
+
+# Shadow profiles — (blur radius, vertical offset, alpha 0–255) tuples.
+# Each profile is tuned for the silhouette it sits behind:
+#   BUTTON_CHIP — small chip on top of the title bar, blur fits inside the bar's vertical breathing room
+#   BODY_EXPANDED — roomy soft shadow for the full note window
+#   BODY_COLLAPSED — tighter denser shadow so the floating-pill feel survives without the body's silhouette
+#   PANEL — softer mid-range shadow for the options popup
+SHADOW_BUTTON_CHIP    = (6,  2, 90)
+SHADOW_BODY_EXPANDED  = (24, 5, 130)
+SHADOW_BODY_COLLAPSED = (14, 4, 175)
+SHADOW_PANEL          = (16, 4, 80)
 
 # Legacy context-menu colors kept for tray menu styling
 MENU_BACKGROUND_COLOR = "#ffffff"
