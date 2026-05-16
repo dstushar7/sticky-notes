@@ -1546,23 +1546,25 @@ class SettingsDialog(QDialog):
         title.setStyleSheet("font-size: 14pt; font-weight: 600;")
         layout.addWidget(title)
 
-        self.autostart_cb = QCheckBox("Launch on system startup")
-        self.autostart_cb.setChecked(autostart.is_enabled())
-        self.autostart_cb.toggled.connect(self._on_autostart_toggled)
-        layout.addWidget(self.autostart_cb)
-
-        # Snap users can't write to the real ~/.config/autostart from inside
-        # the sandbox, so silently writing there would recreate the orphan-
-        # process bug. Disable the toggle with a clear explanation instead.
+        # Snap builds auto-start via the snapd `autostart:` entry, created
+        # on first launch. The app can't toggle that from inside the
+        # sandbox, so show accurate info instead of a dead/false checkbox.
+        # Non-snap builds keep the working XDG autostart toggle.
         if autostart.is_snap_runtime():
-            self.autostart_cb.setEnabled(False)
-            hint = QLabel(
-                "Autostart is not available in the Snap build.\n"
-                "Use your desktop's “Startup Applications” panel instead."
+            self.autostart_cb = None
+            info = QLabel(
+                "This Snap starts automatically at login after its first "
+                "launch. To turn it off, use your desktop's "
+                "“Startup Applications” panel."
             )
-            hint.setWordWrap(True)
-            hint.setStyleSheet("color: #888; font-size: 9pt;")
-            layout.addWidget(hint)
+            info.setWordWrap(True)
+            info.setStyleSheet("color: #888; font-size: 9pt;")
+            layout.addWidget(info)
+        else:
+            self.autostart_cb = QCheckBox("Launch on system startup")
+            self.autostart_cb.setChecked(autostart.is_enabled())
+            self.autostart_cb.toggled.connect(self._on_autostart_toggled)
+            layout.addWidget(self.autostart_cb)
 
         self.status = QLabel("")
         self.status.setStyleSheet("color: #cc0000; font-size: 9pt;")

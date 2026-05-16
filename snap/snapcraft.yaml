@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.0.3'
+version: '3.1.0'
 platforms:
   amd64:
 summary: The lightest, prettiest sticky notes app on Linux. No cloud, no nonsense.
@@ -60,6 +60,7 @@ apps:
     command: bin/python3 $SNAP/run_stickynotes.py
     extensions: [gnome]
     desktop: gui/stickynotes.desktop
+    autostart: stickynotes.desktop
     plugs: [home]
 
 parts:
