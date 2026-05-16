@@ -4,8 +4,9 @@
 ![Python](https://img.shields.io/badge/python-3.10+-blue?logo=python)
 ![PyQt6](https://img.shields.io/badge/PyQt6-GUI-green)
 ![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
+![Installed size](https://img.shields.io/badge/installed%20size-~26%20MB-brightgreen)
 
-A desktop **Sticky Notes** app for Linux, built with **Python** and **PyQt6** — frameless, glass-styled, and outrageously pretty.  
+A desktop **Sticky Notes** app for Linux, built with **Python** and **PyQt6** — frameless, glass-styled, outrageously pretty, and featherweight (~26 MB installed).  
 Jot down thoughts, ideas, and reminders right on your desktop with rich text, 7 color themes, and a one-click collapse-to-pill UI.  
 Notes save locally and are restored exactly where you left them between sessions.
 

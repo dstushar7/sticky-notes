@@ -1,10 +1,10 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.0.2'
+version: '3.0.3'
 platforms:
   amd64:
-summary: Outrageously pretty sticky notes. No cloud, no account, no nonsense.
+summary: The lightest, prettiest sticky notes app on Linux. No cloud, no nonsense.
 icon: snap/gui/stickynotes.png
 description: |
   Sticky notes. That's it. That's the app.
@@ -12,6 +12,9 @@ description: |
   No cloud. No account. No "AI note assistant." No spatial canvas you have to
   pan around just to find your grocery list. Just outrageously pretty notes
   that stick to your desktop and then get out of your way.
+
+  Oh, and the whole thing is about 26 MB installed — while the competition
+  ships half an operating system just to show you a yellow square.
 
   Nice to look at
   - Frameless and rounded with soft drop shadows — it belongs on a desktop in
