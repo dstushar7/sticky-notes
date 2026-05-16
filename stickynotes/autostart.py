@@ -35,6 +35,13 @@ def is_snap_runtime() -> bool:
 # ---------------------------------------------------------------------------
 
 def _autostart_dir() -> Path:
+    # Under strict snap confinement HOME and XDG_CONFIG_HOME are redirected
+    # into ~/snap/<name>/current/.config, which the desktop session never
+    # reads at login. The personal-files plug grants write to the REAL
+    # ~/.config/autostart, so target that explicitly via SNAP_REAL_HOME.
+    if is_snap_runtime():
+        real_home = os.environ.get("SNAP_REAL_HOME") or str(Path.home())
+        return Path(real_home) / ".config" / "autostart"
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "autostart"
 

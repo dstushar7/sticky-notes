@@ -1546,25 +1546,24 @@ class SettingsDialog(QDialog):
         title.setStyleSheet("font-size: 14pt; font-weight: 600;")
         layout.addWidget(title)
 
-        # Snap builds auto-start via the snapd `autostart:` entry, created
-        # on first launch. The app can't toggle that from inside the
-        # sandbox, so show accurate info instead of a dead/false checkbox.
-        # Non-snap builds keep the working XDG autostart toggle.
+        self.autostart_cb = QCheckBox("Launch on system startup")
+        self.autostart_cb.setChecked(autostart.is_enabled())
+        self.autostart_cb.toggled.connect(self._on_autostart_toggled)
+        layout.addWidget(self.autostart_cb)
+
+        # In the Snap build the toggle writes to the real ~/.config/autostart
+        # via the personal-files interface. If that interface isn't connected
+        # the write fails gracefully (handled in _on_autostart_toggled);
+        # surface the one-time connect command so the user can fix it.
         if autostart.is_snap_runtime():
-            self.autostart_cb = None
-            info = QLabel(
-                "This Snap starts automatically at login after its first "
-                "launch. To turn it off, use your desktop's "
-                "“Startup Applications” panel."
+            hint = QLabel(
+                "Snap build: if the toggle doesn't stick, connect the "
+                "interface once —\n"
+                "sudo snap connect stickynotes-dabobroto:dot-config-autostart"
             )
-            info.setWordWrap(True)
-            info.setStyleSheet("color: #888; font-size: 9pt;")
-            layout.addWidget(info)
-        else:
-            self.autostart_cb = QCheckBox("Launch on system startup")
-            self.autostart_cb.setChecked(autostart.is_enabled())
-            self.autostart_cb.toggled.connect(self._on_autostart_toggled)
-            layout.addWidget(self.autostart_cb)
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: #888; font-size: 9pt;")
+            layout.addWidget(hint)
 
         self.status = QLabel("")
         self.status.setStyleSheet("color: #cc0000; font-size: 9pt;")
