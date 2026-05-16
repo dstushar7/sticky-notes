@@ -32,6 +32,8 @@ description: |
   - Notes name themselves from your first line until you decide otherwise
   - Drag them anywhere, resize from any edge, open as many as you like
   - Lives in the system tray with your latest notes a click away
+  - Starts with you at login so it's just there — switch that off anytime in
+    your desktop's Startup Applications
   - A two-click delete, so you never nuke a note by flinching
 
   What it deliberately does NOT do
