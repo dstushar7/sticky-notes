@@ -5,9 +5,9 @@
 ![PyQt6](https://img.shields.io/badge/PyQt6-GUI-green)
 ![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
 
-A desktop **Sticky Notes** app built with **Python** and **PyQt6**, styled to match the look and feel of **Windows 11 Sticky Notes** — running natively on Linux.  
-Jot down thoughts, ideas, and reminders right on your desktop with rich text, color themes, and a clean frameless UI.  
-Notes are automatically saved and fully restored between sessions.
+A desktop **Sticky Notes** app for Linux, built with **Python** and **PyQt6** — frameless, glass-styled, and outrageously pretty.  
+Jot down thoughts, ideas, and reminders right on your desktop with rich text, 7 color themes, and a one-click collapse-to-pill UI.  
+Notes save locally and are restored exactly where you left them between sessions.
 
 ---
 

@@ -1,16 +1,47 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.0.1'
+version: '3.0.2'
 platforms:
   amd64:
-summary: A simple and elegant sticky notes app for your desktop.
+summary: Outrageously pretty sticky notes. No cloud, no account, no nonsense.
 icon: snap/gui/stickynotes.png
 description: |
-  Sticky Notes is a lightweight note-taking application
-  for your Linux desktop. Run it from the system tray,
-  create multiple notes, and enjoy automatic saving between sessions.
-  Built with Python and PyQt6.
+  Sticky notes. That's it. That's the app.
+
+  No cloud. No account. No "AI note assistant." No spatial canvas you have to
+  pan around just to find your grocery list. Just outrageously pretty notes
+  that stick to your desktop and then get out of your way.
+
+  Nice to look at
+  - Frameless and rounded with soft drop shadows — it belongs on a desktop in
+    2026, not a 2006 panel
+  - Seven hand-picked themes: yellow, green, pink, purple, blue, gray, and a
+    charcoal dark mode
+  - Glass-style floating buttons that quietly fade back when you're not using them
+  - Collapse any note to a tidy pill with a double-click — declutter without
+    closing a thing
+
+  Nice to use
+  - Rich text: bold, italic, underline, strikethrough, and nested bullet lists
+    (three bullet styles, because someone out there cares)
+  - Real keyboard shortcuts: Ctrl+B/I/U, Ctrl+Shift+S, Ctrl+Shift+L, Tab to indent
+  - Notes name themselves from your first line until you decide otherwise
+  - Drag them anywhere, resize from any edge, open as many as you like
+  - Lives in the system tray with your latest notes a click away
+  - A two-click delete, so you never nuke a note by flinching
+
+  What it deliberately does NOT do
+  - Sync to a cloud you never asked for
+  - Make you create an account to write the word "milk"
+  - Phone home, track you, or ship a single line of telemetry
+  - Pretend to be a wiki, a knowledge base, or your second brain
+
+  Where your notes live
+  On your machine, in a plain local config file. No servers, no encryption
+  ceremony, no "vault" to unlock — it's a sticky note, not a Swiss bank.
+
+  Free, tiny, and it does one thing properly.
 
 grade: stable
 confinement: strict
