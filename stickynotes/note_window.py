@@ -1074,8 +1074,12 @@ class StickyNote(QWidget):
         if self._options_panel is not None:
             self._close_options_panel()
             return
-
-        panel = OptionsPanel(self._theme_name)
+        # Parent the popup to the note window so Wayland has a parent surface
+        # to anchor the xdg_popup against. Without a parent, the panel either
+        # falls back to a parentless toplevel (which can't be positioned on
+        # Wayland) or lands at the compositor's default spot instead of the
+        # "..." button.
+        panel = OptionsPanel(self._theme_name, parent=self)
         panel.themeSelected.connect(self._change_theme)
         panel.deleteRequested.connect(self._handle_delete)
         panel.dismissed.connect(self._on_panel_dismissed)
