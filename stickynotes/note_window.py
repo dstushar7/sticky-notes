@@ -192,11 +192,18 @@ class _DeleteButton(QPushButton):
         self._apply_idle_style()
 
     def _apply_idle_style(self):
+        # Opaque colors equivalent to the original rgba(220, 50, 60, α)
+        # composited against the panel's #ffffff background. Kept opaque on
+        # purpose: WA_TranslucentBackground on the OptionsPanel can fail to
+        # reliably paint the panel's white BG under child widgets on Wayland
+        # (via XWayland), causing the note's text to bleed through any
+        # translucent child. These hex values render IDENTICALLY to the
+        # original on the white panel but never leak content behind.
         self.setStyleSheet("""
             QPushButton {
-                background-color: rgba(220, 50, 60, 0.10);
+                background-color: #fceaec;
                 color: #c0341d;
-                border: 1px solid rgba(220, 50, 60, 0.22);
+                border: 1px solid #f7d2d4;
                 border-radius: 8px;
                 padding: 8px 12px;
                 font-size: 10pt;
@@ -204,11 +211,11 @@ class _DeleteButton(QPushButton):
                 text-align: center;
             }
             QPushButton:hover {
-                background-color: rgba(220, 50, 60, 0.18);
-                border: 1px solid rgba(220, 50, 60, 0.35);
+                background-color: #f9dadc;
+                border: 1px solid #f3b7bb;
             }
             QPushButton:pressed {
-                background-color: rgba(220, 50, 60, 0.28);
+                background-color: #f5c6c8;
             }
         """)
 
@@ -307,10 +314,13 @@ class OptionsPanel(QWidget):
             swatch_row.addWidget(btn)
         layout.addLayout(swatch_row)
 
-        # Separator — reads as the boundary between picker and destructive action
+        # Separator — reads as the boundary between picker and destructive
+        # action. Opaque hex equivalent of rgba(0, 0, 0, 0.10) composited on
+        # the panel's #ffffff (see _DeleteButton._apply_idle_style for why
+        # opaque colors are required here on Wayland-via-XWayland).
         separator = QFrame(self)
         separator.setFixedHeight(1)
-        separator.setStyleSheet("background-color: rgba(0, 0, 0, 0.10);")
+        separator.setStyleSheet("background-color: #e6e6e6;")
         layout.addWidget(separator)
 
         # Destructive action — two-click confirm pattern lives inside the button
