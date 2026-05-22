@@ -8,15 +8,16 @@ from PyQt6.QtWidgets import (
     QApplication, QDialog, QCheckBox, QFrame,
 )
 from PyQt6.QtCore import (
-    QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray,
+    QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray, QUrl,
     QPropertyAnimation, QParallelAnimationGroup, QEasingCurve,
     QEvent, QTimer,
 )
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextCursor, QKeySequence, QShortcut, QFont,
-    QFontMetrics,
+    QFontMetrics, QDesktopServices,
 )
 
+from . import __version__
 from . import config
 from . import utils
 from . import autostart
@@ -1538,6 +1539,107 @@ class StickyNote(QWidget):
         if not self._is_being_deleted:
             self._save()
         super().closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# AboutDialog — app metadata + useful links (opened from the tray menu).
+#
+# Deliberately brief. Version is pulled from stickynotes.__version__ so it
+# never drifts from the actual package. Links open in the user's default
+# browser / mail client via QDesktopServices.
+# ---------------------------------------------------------------------------
+class AboutDialog(QDialog):
+    _SOURCE_URL = "https://github.com/dstushar7/sticky-notes"
+    _STORE_URL = "https://snapcraft.io/stickynotes-dabobroto"
+    _ISSUES_URL = "https://github.com/dstushar7/sticky-notes/issues"
+    _CONTACT_EMAIL = "contact@dabobrotosarkar.com"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About Sticky Notes")
+        self.setModal(False)
+        self.setFixedWidth(440)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 18)
+        layout.setSpacing(10)
+
+        # Header: icon + name + version side by side
+        header = QHBoxLayout()
+        header.setSpacing(14)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(utils.create_tray_icon().pixmap(QSize(48, 48)))
+        header.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignTop)
+
+        name_block = QVBoxLayout()
+        name_block.setSpacing(2)
+        name = QLabel("Sticky Notes")
+        name.setStyleSheet("font-size: 16pt; font-weight: 600;")
+        version = QLabel(f"Version {__version__}")
+        version.setStyleSheet("color: #888; font-size: 10pt;")
+        name_block.addWidget(name)
+        name_block.addWidget(version)
+        name_block.addStretch()
+        header.addLayout(name_block)
+        header.addStretch()
+        layout.addLayout(header)
+
+        # Tagline — pulled from the Snap Store summary
+        tagline = QLabel(
+            "The lightest, prettiest sticky notes app on Linux."
+        )
+        tagline.setWordWrap(True)
+        tagline.setStyleSheet("font-size: 10pt;")
+        layout.addWidget(tagline)
+
+        # Author + license one-liner
+        meta = QLabel("© 2026 Dabobroto Sarkar  ·  MIT licensed")
+        meta.setStyleSheet("color: #888; font-size: 9pt;")
+        layout.addWidget(meta)
+
+        layout.addSpacing(4)
+
+        # Link buttons — each opens the URL in the user's default browser.
+        # PointingHandCursor signals they're clickable like normal hyperlinks.
+        link_row = QHBoxLayout()
+        link_row.setSpacing(8)
+        for label, url in (
+            ("Source", self._SOURCE_URL),
+            ("Snap Store", self._STORE_URL),
+            ("Report a bug", self._ISSUES_URL),
+        ):
+            btn = QPushButton(label)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(
+                lambda _checked=False, u=url: QDesktopServices.openUrl(QUrl(u))
+            )
+            link_row.addWidget(btn)
+        link_row.addStretch()
+        layout.addLayout(link_row)
+
+        layout.addSpacing(4)
+
+        # Footer: tech credit + clickable mailto. Rich-text QLabel handles
+        # the mailto: link via setOpenExternalLinks.
+        footer = QLabel(
+            "Built with Python and PyQt6  ·  "
+            f'<a href="mailto:{self._CONTACT_EMAIL}" '
+            f'style="color:#888;">{self._CONTACT_EMAIL}</a>'
+        )
+        footer.setTextFormat(Qt.TextFormat.RichText)
+        footer.setOpenExternalLinks(True)
+        footer.setStyleSheet("color: #888; font-size: 9pt;")
+        layout.addWidget(footer)
+
+        # Close button — bottom-right, conventional dialog placement
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
 
 
 # ---------------------------------------------------------------------------

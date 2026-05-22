@@ -5,7 +5,7 @@ import sys
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction, QGuiApplication
 from PyQt6.QtCore import QSettings
-from .note_window import StickyNote, SettingsDialog
+from .note_window import StickyNote, SettingsDialog, AboutDialog
 from . import autostart
 from . import utils
 from . import config
@@ -18,6 +18,7 @@ class TrayManager:
         self.app = app
         self.open_notes = {}
         self._settings_dialog = None
+        self._about_dialog = None
 
         self.app.setQuitOnLastWindowClosed(False)
         # app.quit() does not call closeEvent on individual windows, so any
@@ -143,6 +144,10 @@ class TrayManager:
         settings_action.triggered.connect(self._show_settings)
         self.menu.addAction(settings_action)
 
+        about_action = QAction("About Sticky Notes", parent=self.menu)
+        about_action.triggered.connect(self._show_about)
+        self.menu.addAction(about_action)
+
         self.menu.addSeparator()
         quit_action = QAction("Quit", parent=self.menu)
         quit_action.triggered.connect(self.app.quit)
@@ -223,6 +228,17 @@ class TrayManager:
         dlg = SettingsDialog()
         dlg.finished.connect(lambda _r: setattr(self, "_settings_dialog", None))
         self._settings_dialog = dlg
+        dlg.show()
+
+    def _show_about(self):
+        # Same reuse-once pattern as Settings — repeated clicks just refocus.
+        if self._about_dialog is not None and self._about_dialog.isVisible():
+            self._about_dialog.raise_()
+            self._about_dialog.activateWindow()
+            return
+        dlg = AboutDialog()
+        dlg.finished.connect(lambda _r: setattr(self, "_about_dialog", None))
+        self._about_dialog = dlg
         dlg.show()
 
     def _show_all_notes(self):

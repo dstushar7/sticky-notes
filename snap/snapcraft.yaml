@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.1.12'
+version: '3.2.0'
 platforms:
   amd64:
 summary: The lightest, prettiest sticky notes app on Linux. No cloud, no nonsense.
@@ -32,9 +32,9 @@ description: |
   - Notes name themselves from your first line until you decide otherwise
   - Drag them anywhere, resize from any edge, open as many as you like
   - Lives in the system tray with your latest notes a click away
-  - Optional auto-launch at login — flip the toggle in Settings; the app
-    quietly restores your notes and skips the popup if you have nothing
-    saved (no blank window in your face every morning)
+  - Auto-launches at login by default — quietly restores your notes,
+    skips the popup if you have nothing saved, and flips off in Settings
+    if you don't want it (no blank window in your face every morning)
   - A two-click delete, so you never nuke a note by flinching
 
   What it deliberately does NOT do
