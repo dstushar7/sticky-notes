@@ -62,17 +62,7 @@ apps:
     command: bin/python3 $SNAP/run_stickynotes.py
     extensions: [gnome]
     desktop: gui/stickynotes.desktop
-    plugs: [home, dot-config-autostart]
-
-plugs:
-  # App-managed autostart: write access to the REAL ~/.config/autostart so
-  # the in-app "Launch on system startup" toggle works under confinement.
-  # Non-auto-connecting — needs a store request to auto-connect, or:
-  #   sudo snap connect stickynotes-dabobroto:dot-config-autostart
-  dot-config-autostart:
-    interface: personal-files
-    write:
-      - $HOME/.config/autostart
+    plugs: [home]
 
 parts:
   stickynotes:
