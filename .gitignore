@@ -213,4 +213,6 @@ __marimo__/
 overlay/
 prime/
 stage/
-stickynotes_1.0.0_amd64.snap
+
+# Claude
+.claude/

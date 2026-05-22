@@ -3,10 +3,11 @@
 # XDG autostart toggle. Writes/removes ~/.config/autostart/stickynotes.desktop.
 # Honored by GNOME, KDE, XFCE, and most Linux desktop environments.
 #
-# Snap caveat: under strict snap confinement the XDG paths are redirected
-# into ~/snap/<name>/current/.config/ which the desktop session ignores
-# at login. The UI uses is_snap_runtime() to disable the toggle in snap
-# rather than silently writing a no-op file.
+# Under strict snap confinement the XDG paths redirect to
+# $SNAP_USER_DATA/.config/autostart — exactly where snapd's session agent
+# looks. It links per-snap entries into the real ~/.config/autostart at
+# session start, so the same code path works for both source and snap
+# builds without any interface plug.
 
 import os
 import sys
@@ -35,13 +36,10 @@ def is_snap_runtime() -> bool:
 # ---------------------------------------------------------------------------
 
 def _autostart_dir() -> Path:
-    # Under strict snap confinement HOME and XDG_CONFIG_HOME are redirected
-    # into ~/snap/<name>/current/.config, which the desktop session never
-    # reads at login. The personal-files plug grants write to the REAL
-    # ~/.config/autostart, so target that explicitly via SNAP_REAL_HOME.
-    if is_snap_runtime():
-        real_home = os.environ.get("SNAP_REAL_HOME") or str(Path.home())
-        return Path(real_home) / ".config" / "autostart"
+    # Under snap, HOME / XDG_CONFIG_HOME are redirected to
+    # $SNAP_USER_DATA/.config — exactly where snapd's session agent looks
+    # before linking entries into the real ~/.config/autostart at login.
+    # Outside snap this is just the standard XDG path.
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "autostart"
 
