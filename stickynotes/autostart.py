@@ -123,7 +123,6 @@ def set_enabled(enabled: bool) -> None:
     """Enable or disable the autostart entry. Raises OSError on I/O failure."""
     path = _desktop_path()
     if enabled:
-        path.parent.mkdir(parents=True, exist_ok=True)
         contents = (
             "[Desktop Entry]\n"
             "Type=Application\n"
@@ -133,7 +132,16 @@ def set_enabled(enabled: bool) -> None:
             "Terminal=false\n"
             "Categories=Utility;\n"
         )
-        path.write_text(contents)
+        # Write the file directly; only create the parent directory if it's
+        # genuinely missing. Avoids a redundant mkdir on every toggle when
+        # ~/.config/autostart already exists (the common case). The snap
+        # personal-files grant covers the directory, so the fallback mkdir
+        # also succeeds under confinement.
+        try:
+            path.write_text(contents)
+        except FileNotFoundError:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(contents)
     else:
         try:
             path.unlink()

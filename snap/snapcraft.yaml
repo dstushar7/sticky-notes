@@ -65,8 +65,11 @@ apps:
     plugs: [home, dot-config-autostart]
 
 plugs:
-  # App-managed autostart: write access to the REAL ~/.config/autostart so
-  # the in-app "Launch on system startup" toggle works under confinement.
+  # App-managed autostart: write access to ~/.config/autostart so the
+  # in-app "Launch on system startup" toggle works under confinement.
+  # `write` also grants read, so the app can stat its own entry and
+  # create the folder if missing. It only ever creates/removes its own
+  # stickynotes.desktop there.
   # Non-auto-connecting — needs a store request to auto-connect, or:
   #   sudo snap connect stickynotes-dabobroto:dot-config-autostart
   dot-config-autostart:
