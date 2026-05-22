@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 # run_stickynotes.py
 
+import os
+# Force xcb (X11) everywhere — natively on X11, via XWayland on Wayland.
+# Must be set before QApplication is constructed; Qt reads it during init.
+# Setting it here in Python wins over the snap GNOME extension launcher,
+# which otherwise sets QT_QPA_PLATFORM=wayland based on $XDG_SESSION_TYPE
+# and clobbers the apps.<name>.environment block in snapcraft.yaml.
+# setdefault leaves it user-overridable for the rare wayland-only setup.
+os.environ.setdefault("QT_QPA_PLATFORM", "xcb;wayland")
+
 import sys
 from PyQt6.QtWidgets import QApplication
 from stickynotes.tray_manager import TrayManager
