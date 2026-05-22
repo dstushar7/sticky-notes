@@ -2,6 +2,9 @@
 # run_stickynotes.py
 
 import os
+import sys
+import time
+
 # Force xcb (X11) everywhere — natively on X11, via XWayland on Wayland.
 # Must be set before QApplication is constructed; Qt reads it during init.
 # Unconditional assignment (NOT setdefault): the snap GNOME extension's
@@ -11,7 +14,36 @@ import os
 # decorated dialogs wouldn't be movable).
 os.environ["QT_QPA_PLATFORM"] = "xcb;wayland"
 
-import sys
+
+def _wait_for_xwayland_on_autostart():
+    """Smooth a known Qt + GNOME-Wayland race on first login.
+
+    snap autostart fires while the session is still booting; XWayland on
+    GNOME Mutter starts lazily and isn't always ready at that moment.
+    Without this wait, Qt's xcb plugin either falls back to native wayland
+    (where absolute positioning is unsupported) or initializes against a
+    half-ready X server — either way, restored notes land at default
+    positions instead of where the user left them.
+
+    Scoped tight: only runs on (a) autostart launches with --autostart in
+    argv AND (b) Wayland sessions. Manual launches and X11 sessions skip
+    this entirely (they have no race to smooth)."""
+    if "--autostart" not in sys.argv:
+        return
+    if os.environ.get("XDG_SESSION_TYPE") != "wayland":
+        return
+    # Poll for the XWayland socket; bail out as soon as it appears, with a
+    # tiny extra pause to let XWayland finish accepting connections.
+    # Capped at ~5 s so we never block login indefinitely.
+    for _ in range(50):
+        if os.path.exists("/tmp/.X11-unix/X0"):
+            time.sleep(0.5)
+            return
+        time.sleep(0.1)
+
+
+_wait_for_xwayland_on_autostart()
+
 from PyQt6.QtWidgets import QApplication
 from stickynotes.tray_manager import TrayManager
 from stickynotes import config

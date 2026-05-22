@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.2.1'
+version: '3.2.2'
 platforms:
   amd64:
 summary: The lightest, prettiest sticky notes app on Linux. No cloud, no nonsense.
