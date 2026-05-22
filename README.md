@@ -24,7 +24,7 @@ Notes save locally and are restored exactly where you left them between sessions
 - 🖱️ **Resizable from all 8 edges and corners** — no OS chrome needed
 - 🧩 System tray integration with a **Show Note ▶** submenu listing open notes, sorted by most recently edited
 - 👁️ "Show All Notes" support to bring all notes to the front
-- 🚀 **Launch on system startup** — the Snap build auto-starts at login after its first launch (managed by Snap; disable via your desktop's Startup Applications). The source build offers a Settings toggle backed by a self-cleaning XDG autostart entry that removes itself if the app is uninstalled
+- 🚀 **Launch on system startup** — flip the toggle in Settings. The app auto-launches quietly to your tray on login, restores your saved notes, and never pops a blank window at you when there's nothing to show
 - 🟢 Packaged as a **Snap app** for easy Linux installation
 
 ---
@@ -72,7 +72,7 @@ Right-click the tray icon to:
 - 📝 **New Note** — creates a note in the default Yellow theme
 - 👁️ **Show All Notes** — brings every note to the front
 - 📂 **Show Note ▶** — submenu listing each open note by title, most recently edited first; click an entry to jump straight to that note
-- ⚙️ **Settings…** — startup behavior (a "Launch on system startup" toggle in the source build; the Snap auto-starts at login and shows how to turn it off)
+- ⚙️ **Settings…** — toggle "Launch on system startup"
 - ❌ **Quit the Application**
 
 ### Inside each note

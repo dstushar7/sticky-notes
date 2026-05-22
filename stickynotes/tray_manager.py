@@ -1,5 +1,7 @@
 # stickynotes/tray_manager.py
 
+import sys
+
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QSettings
@@ -24,8 +26,44 @@ class TrayManager:
         self._setup_tray_icon()
         self._load_notes()
 
+        # Decide whether to show a starter note when no notes were restored.
+        # Three states map to three behaviors:
+        #   - first launch ever (no QSettings flag yet)  → welcoming note
+        #   - subsequent manual launch with no notes     → blank starter
+        #   - autostart launch with no notes             → silent tray
+        #
+        # The autostart case is the important one: without this gate, every
+        # login on an empty state would flash up an unwanted blank note —
+        # the exact "gets in your way" behavior the app is positioned against.
         if not self.open_notes:
-            self._create_new_note()
+            settings = QSettings(config.ORG_NAME, config.APP_NAME)
+            is_first_ever = not settings.value(
+                "first_launch_completed", False, type=bool
+            )
+            is_autostart = "--autostart" in sys.argv
+
+            if is_first_ever:
+                self._create_welcome_note()
+            elif not is_autostart:
+                self._create_new_note()
+            # else: autostart with no saved notes → stay silent in the tray.
+
+            settings.setValue("first_launch_completed", True)
+
+    def _create_welcome_note(self):
+        """First-launch onboarding note. Pre-filled with a short tour so a
+        brand-new user discovers the non-obvious features (collapse,
+        keyboard shortcuts, theme switcher) within seconds of install."""
+        body = (
+            "A few quick tips:\n"
+            "• Double-click the title bar to collapse to a pill\n"
+            "• Ctrl+B, Ctrl+I, Ctrl+U for bold, italic, underline\n"
+            "• Click the + button to add another note\n"
+            "• Click ••• to switch themes or delete\n"
+            "\n"
+            "Click the title to rename. Edit or delete this note whenever."
+        )
+        self._create_new_note(title="Welcome to Sticky Notes", content=body)
 
     def _save_all_notes(self):
         for note in self.open_notes.values():

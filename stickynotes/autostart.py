@@ -49,14 +49,21 @@ def _desktop_path() -> Path:
 
 
 def _exec_argv() -> list[str]:
-    """Argv to invoke when autostart fires."""
+    """Argv to invoke when autostart fires.
+
+    The trailing --autostart marker lets the launched app distinguish a
+    login-time autostart from a manual user launch. TrayManager uses
+    this to skip creating a blank starter note when the user has no
+    saved notes — so logging in to an empty state stays quiet instead
+    of flashing up a useless empty window every time.
+    """
     if is_snap_runtime():
-        return [f"/snap/bin/{_OWN_SNAP_NAME}.{_OWN_SNAP_APP}"]
+        return [f"/snap/bin/{_OWN_SNAP_NAME}.{_OWN_SNAP_APP}", "--autostart"]
     entry = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
     if entry and entry.endswith("run_stickynotes.py"):
-        return [sys.executable, entry]
+        return [sys.executable, entry, "--autostart"]
     # Last-resort fallback — at least the interpreter is correct.
-    return [sys.executable]
+    return [sys.executable, "--autostart"]
 
 
 # ---------------------------------------------------------------------------
@@ -102,9 +109,11 @@ def _exec_line() -> str:
     argv = _exec_argv()
 
     if is_snap_runtime():
-        # Single-token /snap/bin/<snap>.<app> — no quoting needed
-        # (snap/app names can't contain shell-special characters).
-        return argv[0]
+        # Plain space-joined argv. snapd parses Exec=, discards the binary
+        # token, and appends remaining args to the <snap>.<app> wrapper
+        # invocation. No XDG quoting needed — neither the snap path nor
+        # --autostart contains shell-special characters.
+        return " ".join(argv)
 
     binary = argv[0]
     desktop = str(_desktop_path())
