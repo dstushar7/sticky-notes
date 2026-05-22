@@ -229,22 +229,17 @@ class TrayManager:
         )
         note.noteDeleted.connect(self._handle_note_deletion)
         note.newNoteRequested.connect(self._new_note_from_signal)
+        note.show()
         self.open_notes[note.note_id] = note
 
         # Mutter ignores client-requested window positions during its
-        # initial placement phase on Wayland autostart launches. Showing
-        # the note immediately means it flashes at the default spot and
-        # then visibly jumps to the saved position when we reapply ~2 s
-        # later. Better UX: hold show() until Mutter is past that phase,
-        # then map the window at its saved position from the start —
-        # no flash, no jump. The 500 ms follow-up reapply is a safety net
-        # for slower compositors where 2 s wasn't enough; harmless no-op
-        # otherwise. Scoped to the failing case; other launches show now.
+        # initial placement phase on Wayland autostart launches — xcb
+        # loads cleanly via XWayland yet our move()/restoreGeometry calls
+        # in __init__ get overridden. Re-asserting position after the
+        # compositor has settled is what makes positions actually stick.
+        # Scoped tight to the failing case; other launch paths skip.
         if _AUTOSTART_ON_WAYLAND and geometry_data is not None:
-            QTimer.singleShot(2000, note.show)
-            QTimer.singleShot(2500, note._reapply_initial_position)
-        else:
-            note.show()
+            QTimer.singleShot(2000, note._reapply_initial_position)
 
     def _new_note_from_signal(self, theme_name: str):
         """Slot for StickyNote.newNoteRequested — creates note in same theme."""
