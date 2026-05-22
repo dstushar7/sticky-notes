@@ -45,6 +45,16 @@ class TrayManager:
 
             if is_first_ever:
                 self._create_welcome_note()
+                # Default autostart ON for new installs — better UX (the
+                # app is just there at every login without the user having
+                # to discover Settings first). Toggle off any time from
+                # Settings if not wanted. Existing users (flag already
+                # set) keep whatever preference they previously had —
+                # this branch never runs for them.
+                try:
+                    autostart.set_enabled(True)
+                except OSError:
+                    pass  # filesystem hiccup; user can enable via Settings
             elif not is_autostart:
                 self._create_new_note()
             # else: autostart with no saved notes → stay silent in the tray.
