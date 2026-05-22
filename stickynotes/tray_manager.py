@@ -78,14 +78,21 @@ class TrayManager:
         """First-launch onboarding note. Pre-filled with a short tour so a
         brand-new user discovers the non-obvious features (collapse,
         keyboard shortcuts, theme switcher) within seconds of install."""
+        # HTML (not plain text). StickyNote routes content starting with '<'
+        # through setHtml, the same load path restored notes use. Loading
+        # via setPlainText was leaving the char format in an unspecified
+        # state — Ctrl+B/I/U/Shift+S applied formatting but couldn't toggle
+        # it back. HTML gives every character an explicit char format so
+        # the toggle is well-defined from the first press.
         body = (
-            "A few quick tips:\n"
-            "• Double-click the title bar to collapse to a pill\n"
-            "• Ctrl+B, Ctrl+I, Ctrl+U for bold, italic, underline\n"
-            "• Click the + button to add another note\n"
-            "• Click ••• to switch themes or delete\n"
-            "\n"
-            "Click the title to rename. Edit or delete this note whenever."
+            "<p>A few quick tips:</p>"
+            "<ul>"
+            "<li>Double-click the title bar to collapse to a pill</li>"
+            "<li>Ctrl+B, Ctrl+I, Ctrl+U for bold, italic, underline</li>"
+            "<li>Click the + button to add another note</li>"
+            "<li>Click ••• to switch themes or delete</li>"
+            "</ul>"
+            "<p>Click the title to rename. Edit or delete this note whenever.</p>"
         )
         # Size the welcome note so the tips fit without scrolling — the
         # default new-note size clips most of the lines. Center it on the
