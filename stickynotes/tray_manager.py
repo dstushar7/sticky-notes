@@ -3,7 +3,7 @@
 import sys
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QGuiApplication
 from PyQt6.QtCore import QSettings
 from .note_window import StickyNote, SettingsDialog
 from . import autostart
@@ -76,7 +76,22 @@ class TrayManager:
             "\n"
             "Click the title to rename. Edit or delete this note whenever."
         )
-        self._create_new_note(title="Welcome to Sticky Notes", content=body)
+        # Size the welcome note so the tips fit without scrolling — the
+        # default new-note size clips most of the lines. Center it on the
+        # primary screen so it lands somewhere obvious on first launch.
+        w, h = 460, 380
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            g = screen.availableGeometry()
+            x = g.x() + (g.width() - w) // 2
+            y = g.y() + (g.height() - h) // 2
+        else:
+            x, y = 250, 200
+        self._create_new_note(
+            title="Welcome to Sticky Notes",
+            content=body,
+            geometry_data=(x, y, w, h),
+        )
 
     def _save_all_notes(self):
         for note in self.open_notes.values():
