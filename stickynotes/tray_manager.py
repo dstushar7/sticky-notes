@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QSettings
 from .note_window import StickyNote, SettingsDialog
+from . import autostart
 from . import utils
 from . import config
 
@@ -49,6 +50,18 @@ class TrayManager:
             # else: autostart with no saved notes → stay silent in the tray.
 
             settings.setValue("first_launch_completed", True)
+
+        # Self-heal the autostart entry on every launch. If the user enabled
+        # autostart on an older version with a different Exec format (e.g.
+        # before --autostart was added), the file in $SNAP_USER_DATA was
+        # never rewritten by the snap upgrade. Rewriting it here with the
+        # current code's format migrates it forward so the next login uses
+        # the up-to-date desktop entry. No-op when autostart is disabled.
+        if autostart.is_enabled():
+            try:
+                autostart.set_enabled(True)
+            except OSError:
+                pass  # leave the stale file rather than crash on startup
 
     def _create_welcome_note(self):
         """First-launch onboarding note. Pre-filled with a short tour so a
