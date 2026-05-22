@@ -907,16 +907,20 @@ class StickyNote(QWidget):
         # at window mapping. The (x, y, w, h) tuple branch only exists to
         # migrate notes saved during the broken intermediate version.
         #
-        # Also stash the raw value so TrayManager can ask us to re-apply it
-        # later — Mutter ignores our positioning during its initial window
-        # placement phase on Wayland autostart, so a deferred second apply
-        # (~2 s after show) is what actually makes positions stick at login.
-        self._initial_geometry_data = geometry_data
-        self._initial_collapsed = collapsed
+        # Also remember the resolved position so TrayManager can ask us to
+        # re-assert it later — Mutter overrides our position request during
+        # its initial window placement phase on Wayland autostart, so a
+        # deferred second move() (~2 s after show) is what actually makes
+        # positions stick at login. We capture POSITION ONLY, not the full
+        # geometry: Mutter doesn't fight requested size, and skipping size
+        # in the reapply means collapsed notes don't get re-expanded from
+        # a stale saved-while-expanded geometry blob.
+        self._initial_position = None
         if isinstance(geometry_data, tuple) and len(geometry_data) == 4:
             x, y, w, h = geometry_data
             self.resize(w, h)
             self.move(x, y)
+            self._initial_position = (x, y)
         elif geometry_data:
             # Some QSettings backends (INI on certain platforms) roundtrip
             # QByteArray as str/bytes. Coerce so restoreGeometry works.
@@ -925,6 +929,7 @@ class StickyNote(QWidget):
             elif isinstance(geometry_data, (bytes, bytearray)):
                 geometry_data = QByteArray(bytes(geometry_data))
             self.restoreGeometry(geometry_data)
+            self._initial_position = (self.x(), self.y())
         else:
             # Default size scales with the user's screen so notes don't look
             # tiny on 1440p/4K or oversized on small laptops.
@@ -960,26 +965,16 @@ class StickyNote(QWidget):
         if collapsed:
             QTimer.singleShot(0, self._collapse_immediately)
 
-    def _reapply_initial_geometry(self):
-        """Re-apply the geometry passed to __init__. Used by TrayManager on
-        autostart-on-Wayland to recover from Mutter ignoring our position
-        request during its initial window placement phase. No-op if the
-        note has no stored geometry (brand-new note) or is collapsed (collapse
-        logic owns sizing — don't fight it)."""
-        if self._initial_collapsed:
+    def _reapply_initial_position(self):
+        """Re-assert the position captured at init. Called via QTimer on
+        autostart-on-Wayland after Mutter has finished its initial window
+        placement (which silently overrode our requested position). Position-
+        only is intentional: Mutter doesn't fight requested size, and not
+        touching size here means collapsed notes stay collapsed instead of
+        re-expanding. No-op for brand-new notes (no captured position)."""
+        if self._initial_position is None:
             return
-        g = self._initial_geometry_data
-        if g is None:
-            return
-        if isinstance(g, tuple) and len(g) == 4:
-            x, y, _w, _h = g
-            self.move(x, y)
-        else:
-            if isinstance(g, str):
-                g = QByteArray(g.encode("latin-1"))
-            elif isinstance(g, (bytes, bytearray)):
-                g = QByteArray(bytes(g))
-            self.restoreGeometry(g)
+        self.move(*self._initial_position)
 
     # ------------------------------------------------------------------
     # UI setup

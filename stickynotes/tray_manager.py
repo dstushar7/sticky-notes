@@ -235,11 +235,11 @@ class TrayManager:
         # Mutter ignores client-requested window positions during its
         # initial placement phase on Wayland autostart launches — xcb
         # loads cleanly via XWayland yet our move()/restoreGeometry calls
-        # in __init__ get overridden. Re-applying after the compositor
-        # has settled is what makes positions actually stick. Scoped
-        # tight to the failing case; other launch paths skip entirely.
+        # in __init__ get overridden. Re-asserting position after the
+        # compositor has settled is what makes positions actually stick.
+        # Scoped tight to the failing case; other launch paths skip.
         if _AUTOSTART_ON_WAYLAND and geometry_data is not None:
-            QTimer.singleShot(2000, note._reapply_initial_geometry)
+            QTimer.singleShot(2000, note._reapply_initial_position)
 
     def _new_note_from_signal(self, theme_name: str):
         """Slot for StickyNote.newNoteRequested — creates note in same theme."""
