@@ -1,14 +1,25 @@
 # stickynotes/tray_manager.py
 
+import os
 import sys
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction, QGuiApplication
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, QTimer
 from .note_window import StickyNote, SettingsDialog, AboutDialog
 from . import autostart
 from . import utils
 from . import config
+
+
+# Set once at import time: are we in the failing case (snap autostart firing
+# during a Wayland session, where Mutter overrides our window positions during
+# its initial placement phase)? Used to scope the deferred-reapply workaround
+# so manual launches and X11 sessions don't pay the cost.
+_AUTOSTART_ON_WAYLAND = (
+    "--autostart" in sys.argv
+    and os.environ.get("XDG_SESSION_TYPE") == "wayland"
+)
 
 
 class TrayManager:
@@ -220,6 +231,15 @@ class TrayManager:
         note.newNoteRequested.connect(self._new_note_from_signal)
         note.show()
         self.open_notes[note.note_id] = note
+
+        # Mutter ignores client-requested window positions during its
+        # initial placement phase on Wayland autostart launches — xcb
+        # loads cleanly via XWayland yet our move()/restoreGeometry calls
+        # in __init__ get overridden. Re-applying after the compositor
+        # has settled is what makes positions actually stick. Scoped
+        # tight to the failing case; other launch paths skip entirely.
+        if _AUTOSTART_ON_WAYLAND and geometry_data is not None:
+            QTimer.singleShot(2000, note._reapply_initial_geometry)
 
     def _new_note_from_signal(self, theme_name: str):
         """Slot for StickyNote.newNoteRequested — creates note in same theme."""
