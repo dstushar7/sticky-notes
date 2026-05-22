@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.1.2'
+version: '3.1.3'
 platforms:
   amd64:
 summary: The lightest, prettiest sticky notes app on Linux. No cloud, no nonsense.
@@ -105,7 +105,10 @@ parts:
         rm -f "$PYQT6/${mod}.abi3.so"
       done
 
-      # Remove unused Qt6 shared libraries (keep Core/Gui/Widgets/DBus/XcbQpa/OpenGL)
+      # Remove unused Qt6 shared libraries (keep Core/Gui/Widgets/DBus/XcbQpa/OpenGL).
+      # WaylandClient + WaylandEglClientHwIntegration are required for the
+      # wayland/wayland-egl platform plugin to load on Wayland sessions —
+      # without them the snap only starts on X11/XWayland.
       find "$QT6LIB" -maxdepth 1 -name 'libQt6*.so*' \
         ! -name 'libQt6Core.so*' \
         ! -name 'libQt6Gui.so*' \
@@ -113,6 +116,8 @@ parts:
         ! -name 'libQt6DBus.so*' \
         ! -name 'libQt6XcbQpa.so*' \
         ! -name 'libQt6OpenGL.so*' \
+        ! -name 'libQt6WaylandClient.so*' \
+        ! -name 'libQt6WaylandEglClientHwIntegration.so*' \
         -delete
 
       # Drop QML, translations, Quick3D/Multimedia-only assets, and libavcodec (15 MB)
