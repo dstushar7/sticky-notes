@@ -1557,6 +1557,15 @@ class StickyNote(QWidget):
         settings.setValue(f"{self.note_id}/title",       self._title)
         settings.setValue(f"{self.note_id}/last_edited", self._last_edited)
         settings.endGroup()
+        # Force the write to disk now. setValue() only stages the change in
+        # Qt's in-memory cache; the real write happens lazily on QSettings
+        # destruction or via a periodic timer. That's fine for a graceful
+        # Quit (Qt has time to flush before exit) but breaks for OS-level
+        # shutdown/logout: the session manager sends SIGTERM, fires our
+        # aboutToQuit -> _save_all_notes path, then SIGKILLs us a few
+        # seconds later — often before Qt finishes flushing. Explicit
+        # sync() makes every save durable regardless of how we exit.
+        settings.sync()
 
     def closeEvent(self, event):
         if not self._is_being_deleted:
