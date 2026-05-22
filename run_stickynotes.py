@@ -4,11 +4,12 @@
 import os
 # Force xcb (X11) everywhere — natively on X11, via XWayland on Wayland.
 # Must be set before QApplication is constructed; Qt reads it during init.
-# Setting it here in Python wins over the snap GNOME extension launcher,
-# which otherwise sets QT_QPA_PLATFORM=wayland based on $XDG_SESSION_TYPE
-# and clobbers the apps.<name>.environment block in snapcraft.yaml.
-# setdefault leaves it user-overridable for the rare wayland-only setup.
-os.environ.setdefault("QT_QPA_PLATFORM", "xcb;wayland")
+# Unconditional assignment (NOT setdefault): the snap GNOME extension's
+# launcher pre-sets QT_QPA_PLATFORM=wayland on Wayland sessions, so we
+# have to overwrite it. Without this, Qt would load the wayland plugin
+# and lose absolute window positioning (notes wouldn't restore position,
+# decorated dialogs wouldn't be movable).
+os.environ["QT_QPA_PLATFORM"] = "xcb;wayland"
 
 import sys
 from PyQt6.QtWidgets import QApplication
