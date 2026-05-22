@@ -63,6 +63,14 @@ apps:
     extensions: [gnome]
     desktop: gui/stickynotes.desktop
     plugs: [home]
+    environment:
+      # Prefer xcb (works natively on X11, and via XWayland on Wayland
+      # sessions). Native Wayland forbids clients from setting absolute
+      # window positions, so per-note geometry won't persist across
+      # restarts under wayland-egl. xcb gives consistent geometry behavior
+      # on both display servers. The ";wayland" fallback only kicks in on
+      # the rare Wayland session without XWayland, where xcb won't load.
+      QT_QPA_PLATFORM: xcb;wayland
 
 parts:
   stickynotes:
