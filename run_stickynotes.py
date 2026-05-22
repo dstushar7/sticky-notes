@@ -27,19 +27,46 @@ def _wait_for_xwayland_on_autostart():
 
     Scoped tight: only runs on (a) autostart launches with --autostart in
     argv AND (b) Wayland sessions. Manual launches and X11 sessions skip
-    this entirely (they have no race to smooth)."""
+    this entirely (they have no race to smooth).
+
+    Polls until XWayland is actually ready — slow laptops can take many
+    seconds to bring it up. Hard ceiling of 5 minutes is a pure safety
+    net for genuinely broken sessions; in practice XWayland appears in
+    seconds. Heartbeat log to stderr every 5 s so journalctl can show
+    exactly how long the wait took (or that we're stuck)."""
     if "--autostart" not in sys.argv:
         return
     if os.environ.get("XDG_SESSION_TYPE") != "wayland":
         return
-    # Poll for the XWayland socket; bail out as soon as it appears, with a
-    # tiny extra pause to let XWayland finish accepting connections.
-    # Capped at ~5 s so we never block login indefinitely.
-    for _ in range(50):
+
+    HARD_CAP_SEC = 300.0
+    HEARTBEAT_SEC = 5.0
+    POLL_SEC = 0.1
+
+    waited = 0.0
+    last_log = 0.0
+    while waited < HARD_CAP_SEC:
         if os.path.exists("/tmp/.X11-unix/X0"):
-            time.sleep(0.5)
+            time.sleep(0.5)  # let XWayland finish accepting connections
+            print(
+                f"[stickynotes] XWayland ready after {waited:.1f}s",
+                file=sys.stderr, flush=True,
+            )
             return
-        time.sleep(0.1)
+        time.sleep(POLL_SEC)
+        waited += POLL_SEC
+        if waited - last_log >= HEARTBEAT_SEC:
+            print(
+                f"[stickynotes] waiting for XWayland… ({waited:.0f}s)",
+                file=sys.stderr, flush=True,
+            )
+            last_log = waited
+
+    print(
+        "[stickynotes] XWayland did not appear within 5 min; continuing "
+        "(positioning may not work this session)",
+        file=sys.stderr, flush=True,
+    )
 
 
 _wait_for_xwayland_on_autostart()
@@ -52,6 +79,16 @@ from stickynotes import config
 def main():
     """Main function to initialize and run the application."""
     app = QApplication(sys.argv)
+
+    # Diagnostic: log the actual platform Qt loaded. Useful for spotting
+    # autostart-on-Wayland regressions — if this prints "wayland" instead
+    # of "xcb" we know xcb failed to initialize and we'll have no
+    # absolute window positioning this session.
+    if "--autostart" in sys.argv:
+        print(
+            f"[stickynotes] Qt platform: {app.platformName()}",
+            file=sys.stderr, flush=True,
+        )
 
     # Stable app identity. On Wayland, Mutter uses the app_id (derived
     # from these) to remember per-app window positions across sessions.
