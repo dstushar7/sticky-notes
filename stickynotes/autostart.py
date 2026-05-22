@@ -85,18 +85,27 @@ def _xdg_quote(s: str) -> str:
 
 
 def _exec_line() -> str:
-    """Self-cleaning Exec= line.
+    """Build the Exec= value for the autostart desktop entry.
 
-    The desktop session ultimately runs:
-        /bin/sh -c '<inner>'
-    where <inner> is:
-        if [ -x <binary> ]; then exec <argv...>; else rm -f <desktop>; fi
+    Under snap: a plain XDG Exec line — just the namespaced /snap/bin/...
+    command. snapd's session-agent syncs the desktop file from
+    $SNAP_USER_DATA/.config/autostart/ into ~/.config/autostart/ at login,
+    and we suspect it filters out non-trivial Exec lines (sh -c wrappers
+    in particular). snapd also handles cleanup of synced entries when the
+    snap is removed, so the source-build's self-cleaning logic is moot.
 
-    If the launcher disappears (source folder deleted, snap removed, etc.)
-    the autostart entry quietly removes itself on the next login attempt
-    instead of failing forever.
+    Outside snap: a self-cleaning /bin/sh -c '<inner>' wrapper that removes
+    the autostart entry if the launcher binary has disappeared (source
+    folder deleted, venv removed, etc.), so a stale entry doesn't fail
+    silently at every login.
     """
     argv = _exec_argv()
+
+    if is_snap_runtime():
+        # Single-token /snap/bin/<snap>.<app> — no quoting needed
+        # (snap/app names can't contain shell-special characters).
+        return argv[0]
+
     binary = argv[0]
     desktop = str(_desktop_path())
 

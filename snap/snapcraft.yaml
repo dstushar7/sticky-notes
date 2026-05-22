@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.1.6'
+version: '3.1.7'
 platforms:
   amd64:
 summary: The lightest, prettiest sticky notes app on Linux. No cloud, no nonsense.
@@ -62,6 +62,10 @@ apps:
     command: bin/python3 $SNAP/run_stickynotes.py
     extensions: [gnome]
     desktop: gui/stickynotes.desktop
+    # Opt-in for snapd's autostart-sync: the session agent watches
+    # $SNAP_USER_DATA/.config/autostart/ and mirrors entries into the
+    # real ~/.config/autostart/ only when this attribute is declared.
+    autostart: stickynotes.desktop
     plugs: [home]
     environment:
       # Prefer xcb (works natively on X11, and via XWayland on Wayland
