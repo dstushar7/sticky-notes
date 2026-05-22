@@ -1551,19 +1551,19 @@ class SettingsDialog(QDialog):
         self.autostart_cb.toggled.connect(self._on_autostart_toggled)
         layout.addWidget(self.autostart_cb)
 
-        # In the Snap build the toggle writes to the real ~/.config/autostart
-        # via the personal-files interface. If that interface isn't connected
-        # the write fails gracefully (handled in _on_autostart_toggled);
-        # surface the one-time connect command so the user can fix it.
+        # In the Snap build the autostart entry currently doesn't translate
+        # into a real session autostart (snapd's session-agent sync from
+        # $SNAP_USER_DATA isn't firing on the platforms tested). Surface
+        # that clearly so users aren't confused by a toggle that appears
+        # to do nothing at login.
         if autostart.is_snap_runtime():
-            hint = QLabel(
-                "Snap build: if the toggle doesn't stick, connect the "
-                "interface once —\n"
-                "sudo snap connect stickynotes-dabobroto:dot-config-autostart"
+            dev_note = QLabel(
+                "Note: in the Snap build this feature is still in development "
+                "and may not take effect at login yet."
             )
-            hint.setWordWrap(True)
-            hint.setStyleSheet("color: #888; font-size: 9pt;")
-            layout.addWidget(hint)
+            dev_note.setWordWrap(True)
+            dev_note.setStyleSheet("color: #888; font-size: 9pt; font-style: italic;")
+            layout.addWidget(dev_note)
 
         self.status = QLabel("")
         self.status.setStyleSheet("color: #cc0000; font-size: 9pt;")
