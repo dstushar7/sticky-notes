@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.2.5'
+version: '3.2.6'
 platforms:
   amd64:
 summary: The lightest, prettiest sticky notes app on Linux. No cloud, no nonsense.
@@ -85,6 +85,7 @@ parts:
       - PyQt6
       - PyQt6-Qt6
       - PyQt6_sip
+      - python-xlib
     stage-packages:
       - libxcb-cursor0
     override-build: |

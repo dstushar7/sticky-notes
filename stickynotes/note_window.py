@@ -21,6 +21,7 @@ from . import __version__
 from . import config
 from . import utils
 from . import autostart
+from . import xwm
 from .widgets import FloatingButton
 
 
@@ -937,6 +938,19 @@ class StickyNote(QWidget):
             default_w = max(280, min(480, screen.width() // 8))
             default_h = max(280, min(480, screen.height() // 6))
             self.resize(default_w, default_h)
+
+        # Tag the window's WM_NORMAL_HINTS with USPosition so Mutter (and any
+        # other X11 WM) honors our requested position on the *initial* window
+        # map instead of overriding it with its own placement strategy. This
+        # is what addresses the autostart-on-Wayland-via-XWayland bug at
+        # source — without USPosition, Mutter sees "program-requested
+        # position" and applies its own layout. With USPosition it sees
+        # "user explicitly requested this position" and honors it. Call
+        # site is AFTER geometry is applied so winId() exists with the
+        # correct geometry, and BEFORE the widget is show()'n so the hint
+        # is set when the WM first maps the window.
+        if geometry_data is not None:
+            xwm.mark_position_user_requested(self)
 
         # Install event filter on children after UI is built
         for child in self.findChildren(QWidget):
