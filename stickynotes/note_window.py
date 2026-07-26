@@ -1587,8 +1587,8 @@ class StickyNote(QWidget):
 # ---------------------------------------------------------------------------
 class AboutDialog(QDialog):
     _SOURCE_URL = "https://github.com/dstushar7/sticky-notes"
-    _STORE_URL = "https://snapcraft.io/stickynotes-dabobroto"
     _ISSUES_URL = "https://github.com/dstushar7/sticky-notes/issues"
+    _DONATE_URL = "https://www.patreon.com/dstushar7/posts/sticky-note-164511062"
     _CONTACT_EMAIL = "contact@dabobrotosarkar.com"
 
     def __init__(self, parent=None):
@@ -1639,15 +1639,20 @@ class AboutDialog(QDialog):
 
         # Link buttons — each opens the URL in the user's default browser.
         # PointingHandCursor signals they're clickable like normal hyperlinks.
+        # Donate sits last and carries the only bit of colour in the row, so
+        # it reads as the one call to action among otherwise neutral links.
         link_row = QHBoxLayout()
         link_row.setSpacing(8)
-        for label, url in (
-            ("Source", self._SOURCE_URL),
-            ("Snap Store", self._STORE_URL),
-            ("Report a bug", self._ISSUES_URL),
+        for label, url, accent in (
+            ("Source", self._SOURCE_URL, False),
+            ("Report a bug", self._ISSUES_URL, False),
+            ("Donate", self._DONATE_URL, True),
         ):
             btn = QPushButton(label)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            if accent:
+                btn.setStyleSheet("color: #d1495b; font-weight: 600;")
+                btn.setToolTip("Support development on Patreon")
             btn.clicked.connect(
                 lambda _checked=False, u=url: QDesktopServices.openUrl(QUrl(u))
             )
