@@ -53,6 +53,30 @@ SHADOW_BODY_EXPANDED  = (24, 5, 130)
 SHADOW_BODY_COLLAPSED = (14, 4, 175)
 SHADOW_PANEL          = (16, 4, 80)
 
+# Tooltips — app-wide chrome, deliberately NOT per-theme.
+#
+# Every button on a note is icon-only or a single letter, so tooltips are the
+# only thing naming them. One consistent style across all seven themes reads
+# as app chrome; a tooltip that recolored itself per note would read as content
+# and compete with the note it's describing.
+#
+# Colors are borrowed from the charcoal theme (title/text) so the tooltip sits
+# inside the existing palette instead of introducing an eighth set of colors.
+# Fully OPAQUE on purpose: tooltips are separate top-level windows, so the same
+# XWayland translucency caveat documented in _DeleteButton._apply_idle_style
+# applies — an rgba background here can let content bleed through.
+TOOLTIP_BACKGROUND_COLOR = "#333333"   # charcoal theme's title color
+TOOLTIP_TEXT_COLOR = "#f0f0f0"         # charcoal theme's text color
+TOOLTIP_BORDER_COLOR = "#5f5f5f"       # lighter than bg so the edge reads on dark notes too
+TOOLTIP_CORNER_RADIUS_PX = 4           # deliberately tighter than CORNER_RADIUS_PX: tooltip
+                                       # windows aren't shaped, so a large radius exposes
+                                       # square-corner artifacts on some compositors
+TOOLTIP_FONT_SIZE_PT = 9               # matches the secondary-text size used in AboutDialog
+# Horizontal only. Qt already applies its own vertical margin inside the tooltip
+# window, so adding vertical padding on top double-counts it — "5px 8px" renders
+# a one-line tooltip 47px tall vs 33px here, which reads visibly puffy.
+TOOLTIP_PADDING = "0px 6px"
+
 # Legacy context-menu colors kept for tray menu styling
 MENU_BACKGROUND_COLOR = "#ffffff"
 MENU_TEXT_COLOR = "#000000"

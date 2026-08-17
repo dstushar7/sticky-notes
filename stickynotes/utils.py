@@ -48,6 +48,27 @@ def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
     return QIcon(pm)
 
 
+def tooltip_stylesheet() -> str:
+    """App-wide QToolTip styling, built from the config tokens.
+
+    Applied once to the QApplication rather than per note: tooltips are
+    top-level windows, and a single app-level rule reaches every one of them
+    (note chrome, the options panel swatches, the About dialog) without each
+    widget having to restyle them. Nothing else in the app styles QToolTip,
+    so this can't collide with the per-widget stylesheets.
+    """
+    return f"""
+        QToolTip {{
+            background-color: {config.TOOLTIP_BACKGROUND_COLOR};
+            color: {config.TOOLTIP_TEXT_COLOR};
+            border: 1px solid {config.TOOLTIP_BORDER_COLOR};
+            border-radius: {config.TOOLTIP_CORNER_RADIUS_PX}px;
+            padding: {config.TOOLTIP_PADDING};
+            font-size: {config.TOOLTIP_FONT_SIZE_PT}pt;
+        }}
+    """
+
+
 def get_theme(name: str) -> dict:
     """Returns theme dict for name, falling back to DEFAULT_THEME if not found."""
     return config.THEMES.get(name, config.THEMES[config.DEFAULT_THEME])

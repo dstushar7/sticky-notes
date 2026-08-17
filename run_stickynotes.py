@@ -74,6 +74,7 @@ _wait_for_xwayland_on_autostart()
 from PyQt6.QtWidgets import QApplication
 from stickynotes.tray_manager import TrayManager
 from stickynotes import config
+from stickynotes import utils
 
 
 def main():
@@ -97,6 +98,11 @@ def main():
     app.setApplicationName(config.APP_NAME)
     app.setApplicationDisplayName("Sticky Notes")
     app.setDesktopFileName("stickynotes")
+
+    # Style tooltips app-wide before any window exists, so the first tooltip
+    # shown is already themed. Currently the only app-level stylesheet — if
+    # more are ever added, concatenate rather than overwriting this one.
+    app.setStyleSheet(utils.tooltip_stylesheet())
 
     _ = TrayManager(app)
     sys.exit(app.exec())
