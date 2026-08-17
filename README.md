@@ -229,6 +229,38 @@ See the [LICENSE](./LICENSE) file for details.
 
 ---
 
+## ™️ Name, Icon, and App Identity
+
+The **code** is MIT licensed — fork it, modify it, ship it, sell it. That grant is
+deliberate and it is not going to be narrowed.
+
+The MIT licence grants **copyright** permissions. It does not grant trademark or
+branding rights, and those are not being licensed here. Specifically **not**
+covered by the MIT grant:
+
+- The **application icon** ([`snap/gui/stickynotes.png`](./snap/gui/stickynotes.png))
+- The **`stickynotes-dabobroto`** Snap Store package name
+- The **`com.dabobrotosarkar.StickyNotes`** application ID and the
+  `com.dabobrotosarkar` / `dabobrotosarkar.com` namespace
+  (see [the AppStream metainfo](./com.dabobrotosarkar.StickyNotes.metainfo.xml))
+
+To be clear about scope: no claim is made over the plain words "sticky notes,"
+which are generic and describe a whole category of software. Call your fork a
+sticky notes app all you like.
+
+**If you redistribute a modified build, please rebrand it** — use your own name,
+your own icon, and your own application ID under a namespace you control. This is
+the same arrangement Firefox and Chromium use, and it exists for one practical
+reason: so a user can tell whose build is running on their desktop. That matters
+more than usual for this app, because it can place notes on a user's screen and
+open links from its About dialog. Those capabilities should be attributable to
+whoever actually shipped the binary.
+
+Official builds are published only by the author. Anything else is a fork,
+and should look like one.
+
+---
+
 ## 👨‍💻 Author
 
 **Tushar D. (@dstushar7)**  

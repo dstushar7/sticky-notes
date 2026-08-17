@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream metainfo — the canonical, machine-readable identity of this app.
+
+  The <id> below is the reverse-DNS application ID, namespaced under a domain
+  the author controls (dabobrotosarkar.com). Software centres (GNOME Software,
+  KDE Discover), Flathub, and AppStream-aware store fronts key off this ID.
+  It is the app's permanent name across every distribution channel — treat it
+  as immutable once published, since changing it orphans installed copies.
+
+  Kept in the repo root, and in sync with snap/snapcraft.yaml, so there is one
+  public record of what the canonical ID is and who publishes it.
+
+  Before any Flathub submission, two things here need to change:
+    - <launchable> and the desktop file must be renamed to match <id>
+      (Flathub requires com.dabobrotosarkar.StickyNotes.desktop). The snap
+      currently ships gui/stickynotes.desktop, and run_stickynotes.py calls
+      setDesktopFileName("stickynotes") to match, so renaming is a
+      coordinated change across all three — not a one-liner.
+    - <screenshots> must be filled in with reachable https URLs; Flathub
+      rejects submissions without at least one screenshot.
+-->
+<component type="desktop-application">
+  <id>com.dabobrotosarkar.StickyNotes</id>
+
+  <name>Sticky Notes</name>
+  <summary>The lightest, prettiest sticky notes app on Linux</summary>
+
+  <!-- metadata_license covers THIS file; project_license covers the code. -->
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="com.dabobrotosarkar">
+    <name>Dabobroto Sarkar</name>
+  </developer>
+
+  <description>
+    <p>
+      Sticky notes. That's it. That's the app. No cloud, no account, no "AI note
+      assistant," no spatial canvas you have to pan around just to find your
+      grocery list. Just outrageously pretty notes that stick to your desktop and
+      then get out of your way — the whole thing about 26 MB installed.
+    </p>
+    <p>Nice to look at:</p>
+    <ul>
+      <li>Frameless and rounded with soft drop shadows</li>
+      <li>Seven hand-picked themes, including a charcoal dark mode</li>
+      <li>Glass-style floating buttons that quietly fade back when unused</li>
+      <li>Collapse any note to a tidy pill with a double-click</li>
+    </ul>
+    <p>Nice to use:</p>
+    <ul>
+      <li>Rich text: bold, italic, underline, strikethrough, nested bullet lists</li>
+      <li>Real keyboard shortcuts throughout</li>
+      <li>Notes name themselves from your first line until you decide otherwise</li>
+      <li>Drag them anywhere, resize from any edge, open as many as you like</li>
+      <li>Lives in the system tray with your latest notes a click away</li>
+      <li>Auto-launches at login, quietly restoring your notes</li>
+      <li>A two-click delete, so you never nuke a note by flinching</li>
+    </ul>
+    <p>
+      Your notes live on your machine, in a plain local config file. No servers,
+      no telemetry, no account to create before you can write the word "milk."
+    </p>
+  </description>
+
+  <launchable type="desktop-id">stickynotes.desktop</launchable>
+
+  <url type="homepage">https://dabobrotosarkar.com/</url>
+  <url type="bugtracker">https://github.com/dstushar7/sticky-notes/issues</url>
+  <url type="vcs-browser">https://github.com/dstushar7/sticky-notes</url>
+  <url type="donation">https://www.patreon.com/dstushar7/posts/sticky-note-164511062</url>
+
+  <categories>
+    <category>Utility</category>
+  </categories>
+
+  <keywords>
+    <keyword>notes</keyword>
+    <keyword>sticky</keyword>
+    <keyword>memo</keyword>
+    <keyword>reminder</keyword>
+    <keyword>desktop</keyword>
+    <keyword>postit</keyword>
+  </keywords>
+
+  <!-- No objectionable content of any kind; an empty element means "all none". -->
+  <content_rating type="oars-1.1" />
+
+  <!-- Desktop-only: needs a pointer for dragging, resizing, and the tray. -->
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#FFF176</color>
+    <color type="primary" scheme_preference="dark">#4A4A4A</color>
+  </branding>
+
+  <!--
+    Screenshots are required for Flathub. Add entries in this shape, pointing at
+    stable https URLs (raw.githubusercontent.com on a tag works fine):
+
+    <screenshots>
+      <screenshot type="default">
+        <image>https://.../notes-overview.png</image>
+        <caption>Several notes in different themes on a desktop</caption>
+      </screenshot>
+    </screenshots>
+  -->
+
+  <releases>
+    <release version="3.2.7" date="2026-07-26" />
+  </releases>
+</component>
