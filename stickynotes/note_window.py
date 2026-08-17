@@ -158,24 +158,59 @@ class NoteTextEdit(QTextEdit):
 
         super().keyPressEvent(event)
 
-    def mousePressEvent(self, event):
-        """Tick/untick a checklist item by clicking its checkbox.
+    def _marker_block_at(self, pos):
+        """Return the checklist block whose checkbox sits at viewport `pos`,
+        or None. Single source of truth for the hit area, shared by the click
+        handler and the hover cursor so the affordance can't drift from the
+        behaviour.
 
         The marker is painted in the indent slot immediately left of the text,
-        so the hit area is the band [text_start - indentWidth, text_start).
-        Restricting it to that band (rather than 'anything left of the text')
-        keeps a click in a nested item's outer indent from toggling it.
+        so the band is [text_start - indentWidth, text_start). Restricting it
+        to that band, rather than 'anything left of the text', keeps a click in
+        a nested item's outer indent from toggling it.
         """
+        block = self.cursorForPosition(pos).block()
+        if not _is_checklist_block(block):
+            return None
+        text_x = self.cursorRect(QTextCursor(block)).left()
+        band = self.document().indentWidth() or config.LIST_INDENT_PX
+        if text_x - band <= pos.x() < text_x:
+            return block
+        return None
+
+    def mousePressEvent(self, event):
+        """Tick/untick a checklist item by clicking its checkbox."""
         if event.button() == Qt.MouseButton.LeftButton:
-            block = self.cursorForPosition(event.pos()).block()
-            if _is_checklist_block(block):
-                text_x = self.cursorRect(QTextCursor(block)).left()
-                band = self.document().indentWidth() or config.LIST_INDENT_PX
-                if text_x - band <= event.pos().x() < text_x:
-                    self._toggle_marker(block)
-                    event.accept()
-                    return
+            block = self._marker_block_at(event.pos())
+            if block is not None:
+                self._toggle_marker(block)
+                event.accept()
+                return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Show a hand cursor over checkboxes — and only over checkboxes.
+
+        Qt sets a PointingHandCursor of its own for blocks carrying a marker,
+        but it computes that hover rect from the DEFAULT indent width (40px)
+        rather than the document's actual indentWidth. With
+        config.LIST_INDENT_PX = 18 the checkbox is painted at [4, 22) while
+        Qt's hand rect stays at roughly [27, 44] — i.e. over the first couple
+        of characters of the text, nowhere near the box. That is the mismatch
+        users notice: pipe cursor on the box that works, hand cursor on the
+        letters that does nothing.
+
+        So for checklist rows we set the cursor ourselves from the same
+        hit-test the click uses. Non-checklist rows are left entirely to Qt.
+        """
+        super().mouseMoveEvent(event)
+        pos = event.pos()
+        if _is_checklist_block(self.cursorForPosition(pos).block()):
+            self.viewport().setCursor(
+                Qt.CursorShape.PointingHandCursor
+                if self._marker_block_at(pos) is not None
+                else Qt.CursorShape.IBeamCursor
+            )
 
     def _toggle_marker(self, block):
         """Flip one checklist item between checked and unchecked. Edits the
@@ -197,6 +232,11 @@ class NoteTextEdit(QTextEdit):
             lst.remove(block)
         fmt = cursor.blockFormat()
         fmt.setIndent(0)
+        # Leaving a checklist must drop the checkbox with it. Without this the
+        # new paragraph keeps an orphan marker: no longer a list item, but Qt
+        # still paints a checkbox for it and still treats it as marker-bearing
+        # for hover purposes.
+        fmt.setMarker(_MARKER_NONE)
         cursor.setBlockFormat(fmt)
         self.setTextCursor(cursor)
 
@@ -214,6 +254,9 @@ class NoteTextEdit(QTextEdit):
             current_list.remove(block)
             bf = cursor.blockFormat()
             bf.setIndent(0)
+            # Same as _break_out_of_list: outdenting out of a checklist has to
+            # take the checkbox with it, or the block keeps an orphan marker.
+            bf.setMarker(_MARKER_NONE)
             cursor.setBlockFormat(bf)
             return
 
