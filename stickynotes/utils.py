@@ -48,6 +48,62 @@ def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
     return QIcon(pm)
 
 
+def create_checklist_icon(color: str, size: int = 24) -> QIcon:
+    """A 'checklist' icon: three rows of a small square box plus a short bar,
+    with a tick in the first box. Deliberately mirrors the geometry of
+    create_bullet_list_icon so the two toolbar buttons read as siblings —
+    same three rows, same bar lengths, box instead of bullet."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    qcolor = QColor(color)
+
+    rows = 3
+    margin_x = size * 0.15
+    box = size * 0.17                     # box side length
+    bar_h = max(1.5, size * 0.08)
+    row_spacing = size * 0.28
+    first_y = (size - row_spacing * (rows - 1)) / 2
+    bar_x = margin_x + box + size * 0.12
+    bar_w = size - bar_x - margin_x
+
+    stroke = max(1.0, size * 0.055)
+    for i in range(rows):
+        cy = first_y + i * row_spacing
+        box_rect = QRectF(margin_x, cy - box / 2, box, box)
+
+        # Outlined box
+        pen = QPen(qcolor)
+        pen.setWidthF(stroke)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(box_rect)
+
+        # Tick in the first box only — signals "checklist", not "empty boxes"
+        if i == 0:
+            tick = QPen(qcolor)
+            tick.setWidthF(stroke * 1.15)
+            tick.setCapStyle(Qt.PenCapStyle.RoundCap)
+            tick.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(tick)
+            p.drawPolyline(QPolygonF([
+                QPointF(box_rect.left() + box * 0.22, box_rect.center().y()),
+                QPointF(box_rect.center().x(),        box_rect.bottom() - box * 0.24),
+                QPointF(box_rect.right() - box * 0.16, box_rect.top() + box * 0.22),
+            ]))
+
+        # Bar (rounded ends), same as the bullet-list icon
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(qcolor)
+        bar_rect = QRectF(bar_x, cy - bar_h / 2, bar_w, bar_h)
+        p.drawRoundedRect(bar_rect, bar_h / 2, bar_h / 2)
+
+    p.end()
+    return QIcon(pm)
+
+
 def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
     """A thumbtack: round head, flange, and a stubby needle.
 
