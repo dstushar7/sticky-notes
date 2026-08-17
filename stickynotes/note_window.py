@@ -299,6 +299,12 @@ class OptionsPanel(QWidget):
         for name, color in self._SWATCHES:
             btn = QPushButton("✓" if name == self._current_theme else "")
             btn.setFixedSize(28, 28)
+            # Swatches carry no text (bar a tick on the active one), so the
+            # colour is the only cue — and at 28px "gray" and "charcoal" are
+            # hard to tell apart. Name them for hover and for screen readers.
+            label = name.capitalize()
+            btn.setToolTip(label)
+            btn.setAccessibleName(f"{label} theme")
             tick_color = "#ffffff" if name == "charcoal" else "#333333"
             btn.setStyleSheet(f"""
                 QPushButton {{
@@ -663,6 +669,7 @@ class TitleBar(QWidget):
             "+",
             tone=FloatingButton.Tone.TITLE_BAR,
             font_css="font-size: 16pt;",
+            tooltip="New note",
         )
         self.add_btn.clicked.connect(self.newNoteRequested.emit)
         layout.addWidget(self.add_btn)
@@ -675,6 +682,7 @@ class TitleBar(QWidget):
             "•••",
             tone=FloatingButton.Tone.TITLE_BAR,
             font_css="font-size: 10pt;",
+            tooltip="Options",
         )
         self.opts_btn.clicked.connect(self.optionsRequested.emit)
         layout.addWidget(self.opts_btn)
@@ -760,12 +768,14 @@ class FormatBar(QWidget):
         layout.setContentsMargins(6, 3, 6, 3)
         layout.setSpacing(3)
 
-        self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: bold;")
-        self.italic_btn    = self._make_btn("I", "italicBtn",    "font-style: italic;")
-        self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline;")
-        self.strike_btn    = self._make_btn("S", "strikeBtn",    "text-decoration: line-through;")
-        # Bullet button uses a painted icon (set in apply_colors); empty text
-        self.bullet_btn    = self._make_btn("", "bulletBtn",     "")
+        self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: bold;",            "Bold")
+        self.italic_btn    = self._make_btn("I", "italicBtn",    "font-style: italic;",           "Italic")
+        self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline;",   "Underline")
+        self.strike_btn    = self._make_btn("S", "strikeBtn",    "text-decoration: line-through;", "Strikethrough")
+        # Bullet button uses a painted icon (set in apply_colors); empty text.
+        # With no label at all, the tooltip/accessible name is the ONLY thing
+        # identifying this button to either a sighted or a screen-reader user.
+        self.bullet_btn    = self._make_btn("", "bulletBtn",     "",                              "Bullet list")
 
         layout.addStretch()
         for btn in self._buttons():
@@ -783,12 +793,13 @@ class FormatBar(QWidget):
                 self.strike_btn, self.bullet_btn)
 
     @staticmethod
-    def _make_btn(label: str, name: str, extra_css: str) -> FloatingButton:
+    def _make_btn(label: str, name: str, extra_css: str, tooltip: str = "") -> FloatingButton:
         btn = FloatingButton(
             label,
             tone=FloatingButton.Tone.TOOLBAR,
             checkable=True,
             extra_css=extra_css,
+            tooltip=tooltip,
         )
         btn.setObjectName(name)
         return btn

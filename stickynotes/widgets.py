@@ -29,6 +29,12 @@ class FloatingButton(QPushButton):
     after construction and again on every theme switch. `extra_css` is the
     per-button "personality" stylesheet (e.g. `font-weight: bold`) that
     survives every re-skin.
+
+    `tooltip` sets both the hover tooltip AND the accessible name. Every
+    button on a note is icon-only or a single letter, so the tooltip is the
+    only thing that names it for a sighted user — and the accessible name is
+    the only thing that names it for a screen reader. They're separate Qt
+    properties serving separate audiences, so both get set from one argument.
     """
 
     class Tone(Enum):
@@ -65,6 +71,7 @@ class FloatingButton(QPushButton):
         checkable: bool = False,
         extra_css: str = "",
         font_css: str = "",
+        tooltip: str = "",
         parent=None,
     ):
         super().__init__(label, parent)
@@ -75,6 +82,9 @@ class FloatingButton(QPushButton):
         # shortcuts stop working once you click a toolbar button.
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCheckable(checkable)
+        if tooltip:
+            self.setToolTip(tooltip)
+            self.setAccessibleName(tooltip)
         if tone == FloatingButton.Tone.TITLE_BAR:
             self.setFixedSize(self.TITLE_BAR_SIZE, self.TITLE_BAR_SIZE)
             self._install_shadow()
