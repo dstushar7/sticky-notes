@@ -30,11 +30,22 @@ class FloatingButton(QPushButton):
     per-button "personality" stylesheet (e.g. `font-weight: bold`) that
     survives every re-skin.
 
-    `tooltip` sets both the hover tooltip AND the accessible name. Every
-    button on a note is icon-only or a single letter, so the tooltip is the
-    only thing that names it for a sighted user — and the accessible name is
-    the only thing that names it for a screen reader. They're separate Qt
-    properties serving separate audiences, so both get set from one argument.
+    `tooltip` names the button. Every button on a note is icon-only or a single
+    letter, so it's the only thing that identifies it for a sighted user — and
+    the accessible name is the only thing that identifies it for a screen
+    reader. Both are set from that one argument.
+
+    `shortcut` and `hint` enrich the *visible* tooltip only:
+        tooltip="Bullet list", shortcut="Ctrl+Shift+L", hint="Tab to indent"
+        -> tooltip reads "Bullet list (Ctrl+Shift+L) — Tab to indent"
+        -> accessible name stays "Bullet list"
+    The split is deliberate. A screen reader announces the accessible name, and
+    it exposes key bindings through a separate channel — folding "(Ctrl+B)" into
+    the name just makes it read the punctuation aloud.
+
+    Note these are display-only: the real bindings are QShortcuts owned by the
+    text edit (see StickyNote._setup_shortcuts). Setting a Qt button shortcut
+    here would create a second, competing binding for the same key.
     """
 
     class Tone(Enum):
@@ -72,6 +83,8 @@ class FloatingButton(QPushButton):
         extra_css: str = "",
         font_css: str = "",
         tooltip: str = "",
+        shortcut: str = "",
+        hint: str = "",
         parent=None,
     ):
         super().__init__(label, parent)
@@ -83,8 +96,13 @@ class FloatingButton(QPushButton):
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCheckable(checkable)
         if tooltip:
-            self.setToolTip(tooltip)
             self.setAccessibleName(tooltip)
+            visible = tooltip
+            if shortcut:
+                visible = f"{visible} ({shortcut})"
+            if hint:
+                visible = f"{visible} — {hint}"
+            self.setToolTip(visible)
         if tone == FloatingButton.Tone.TITLE_BAR:
             self.setFixedSize(self.TITLE_BAR_SIZE, self.TITLE_BAR_SIZE)
             self._install_shadow()

@@ -3,8 +3,8 @@
 import uuid
 from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel,
-    QLineEdit, QStackedLayout, QSizePolicy, QGraphicsDropShadowEffect,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTextEdit, QPushButton,
+    QLabel, QLineEdit, QStackedLayout, QSizePolicy, QGraphicsDropShadowEffect,
     QApplication, QDialog, QCheckBox, QFrame,
 )
 from PyQt6.QtCore import (
@@ -14,7 +14,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextCursor, QKeySequence, QShortcut, QFont,
-    QFontMetrics, QDesktopServices,
+    QFontMetrics, QDesktopServices, QPalette,
 )
 
 from . import __version__
@@ -646,6 +646,7 @@ class TitleBar(QWidget):
     newNoteRequested = pyqtSignal()
     optionsRequested = pyqtSignal()
     titleCommitted = pyqtSignal(str)
+    pinToggled = pyqtSignal(bool)              # emits the new pinned state
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -657,6 +658,9 @@ class TitleBar(QWidget):
         # Style state — kept so set_collapsed_style and apply_colors can
         # re-emit the stylesheet without re-passing every parameter.
         self._title_bg = "#F9E44A"
+        # Remembered so _refresh_pin_icon can repaint the thumbtack on toggle
+        # without waiting for the next apply_colors call.
+        self._btn_color = "#1a1a1a"
         self._is_collapsed_style = False
         self._setup_ui()
 
@@ -678,6 +682,30 @@ class TitleBar(QWidget):
         self.drag_handle.title_widget.committed.connect(self.titleCommitted.emit)
         layout.addWidget(self.drag_handle)
 
+        # Pin sits left of the overflow button. Checkable so FloatingButton's
+        # :checked background carries the state — pinning is a persistent
+        # property, not a one-shot command, so it has to be readable at a
+        # glance rather than hidden behind the ••• panel.
+        #
+        # Always-on-top is X11/XWayland only (EWMH _NET_WM_STATE_ABOVE; native
+        # Wayland has no protocol for it). Rather than hide the control, keep it
+        # visible and disabled with an explanatory tooltip, so "why can't I pin?"
+        # has an answer instead of the feature just being absent.
+        self.pin_btn = FloatingButton(
+            "",
+            tone=FloatingButton.Tone.TITLE_BAR,
+            checkable=True,
+            tooltip="Always on top",
+        )
+        if QApplication.platformName() != "xcb":
+            self.pin_btn.setEnabled(False)
+            self.pin_btn.setToolTip(
+                "Always on top needs X11 or XWayland — unavailable in this session"
+            )
+        self.pin_btn.toggled.connect(self._refresh_pin_icon)
+        self.pin_btn.toggled.connect(self.pinToggled.emit)
+        layout.addWidget(self.pin_btn)
+
         self.opts_btn = FloatingButton(
             "•••",
             tone=FloatingButton.Tone.TITLE_BAR,
@@ -686,6 +714,23 @@ class TitleBar(QWidget):
         )
         self.opts_btn.clicked.connect(self.optionsRequested.emit)
         layout.addWidget(self.opts_btn)
+
+    def set_pinned(self, pinned: bool):
+        """Reflect state in the button WITHOUT re-emitting pinToggled — used
+        when restoring a saved note, where the toggle isn't a user action.
+        Blocking signals also suppresses _refresh_pin_icon, so call it here."""
+        self.pin_btn.blockSignals(True)
+        self.pin_btn.setChecked(pinned)
+        self.pin_btn.blockSignals(False)
+        self._refresh_pin_icon()
+
+    def _refresh_pin_icon(self, *_args):
+        """Repaint the thumbtack for the current checked state and theme colour."""
+        icon_px = max(14, int(FloatingButton.TITLE_BAR_SIZE * 0.66))
+        self.pin_btn.setIcon(utils.create_pin_icon(
+            self._btn_color, icon_px, filled=self.pin_btn.isChecked()
+        ))
+        self.pin_btn.setIconSize(QSize(icon_px, icon_px))
 
     def apply_colors(self, title_bg: str, btn_color: str, hover_overlay: str,
                      is_dark_theme: bool):
@@ -701,8 +746,11 @@ class TitleBar(QWidget):
         self._btn_color = btn_color
         self._rebuild_bar_style()
         FloatingButton.apply_theme_to_all(
-            (self.add_btn, self.opts_btn), btn_color, is_dark_theme
+            (self.add_btn, self.pin_btn, self.opts_btn), btn_color, is_dark_theme
         )
+        # Painted thumbtack, recolored to match the current btn_color — same
+        # approach FormatBar uses for the bullet icon.
+        self._refresh_pin_icon()
         # DragHandle owns the styling for both its own surface and the inner
         # drag-area widget (parent-cascade isn't reliable, so each widget
         # is given its own stylesheet directly).
@@ -768,14 +816,19 @@ class FormatBar(QWidget):
         layout.setContentsMargins(6, 3, 6, 3)
         layout.setSpacing(3)
 
-        self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: bold;",            "Bold")
-        self.italic_btn    = self._make_btn("I", "italicBtn",    "font-style: italic;",           "Italic")
-        self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline;",   "Underline")
-        self.strike_btn    = self._make_btn("S", "strikeBtn",    "text-decoration: line-through;", "Strikethrough")
+        self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: bold;",            "Bold",      "bold")
+        self.italic_btn    = self._make_btn("I", "italicBtn",    "font-style: italic;",           "Italic",    "italic")
+        self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline;",   "Underline", "underline")
+        self.strike_btn    = self._make_btn("S", "strikeBtn",    "text-decoration: line-through;", "Strikethrough", "strike")
         # Bullet button uses a painted icon (set in apply_colors); empty text.
         # With no label at all, the tooltip/accessible name is the ONLY thing
         # identifying this button to either a sighted or a screen-reader user.
-        self.bullet_btn    = self._make_btn("", "bulletBtn",     "",                              "Bullet list")
+        #
+        # It also carries the Tab hint. Tab is only bound INSIDE a list
+        # (NoteTextEdit.keyPressEvent), so nested sublists can't be discovered
+        # by experiment — this button is the one place the hint is relevant.
+        self.bullet_btn    = self._make_btn("", "bulletBtn",     "",                              "Bullet list", "bullet",
+                                            hint="Tab to indent")
 
         layout.addStretch()
         for btn in self._buttons():
@@ -793,13 +846,19 @@ class FormatBar(QWidget):
                 self.strike_btn, self.bullet_btn)
 
     @staticmethod
-    def _make_btn(label: str, name: str, extra_css: str, tooltip: str = "") -> FloatingButton:
+    def _make_btn(label: str, name: str, extra_css: str, tooltip: str = "",
+                  shortcut_key: str = "", hint: str = "") -> FloatingButton:
+        """`shortcut_key` indexes config.SHORTCUTS rather than being a literal
+        key sequence, so the tooltip can only ever show a binding that the app
+        actually installs."""
         btn = FloatingButton(
             label,
             tone=FloatingButton.Tone.TOOLBAR,
             checkable=True,
             extra_css=extra_css,
             tooltip=tooltip,
+            shortcut=config.SHORTCUTS.get(shortcut_key, ""),
+            hint=hint,
         )
         btn.setObjectName(name)
         return btn
@@ -863,6 +922,7 @@ class StickyNote(QWidget):
         collapsed=False,
         title=None,
         last_edited=None,
+        pinned=False,
         parent=None,
     ):
         super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
@@ -874,6 +934,7 @@ class StickyNote(QWidget):
         self.setWindowTitle("Sticky Note")
         self._is_being_deleted = False
         self._theme_name = theme
+        self._is_pinned = bool(pinned)
         self._is_collapsed = False
         self._pre_collapse_height = 250
         self._options_panel = None
@@ -987,8 +1048,34 @@ class StickyNote(QWidget):
         # from being treated as a user edit.
         self.text_edit.textChanged.connect(self._on_body_changed)
 
+        # Restore the pin button's visual state. The X11 state itself can't be
+        # applied yet — _NET_WM_STATE requires a mapped window, so that happens
+        # in showEvent.
+        if self._is_pinned:
+            self.title_bar.set_pinned(True)
+
         if collapsed:
             QTimer.singleShot(0, self._collapse_immediately)
+
+    def showEvent(self, event):
+        """Re-assert always-on-top once the window is actually mapped.
+
+        The EWMH client message is ignored for unmapped windows, so this can't
+        be done in __init__ — by the time showEvent fires the window exists but
+        the WM may not have finished mapping it, hence the deferral to the next
+        event-loop pass. Re-asserting on every show is harmless: _NET_WM_STATE_ADD
+        is idempotent, so "Show All Notes" re-applying it costs nothing.
+        """
+        super().showEvent(event)
+        if self._is_pinned:
+            QTimer.singleShot(0, lambda: xwm.set_always_on_top(self, True))
+
+    def _on_pin_toggled(self, pinned: bool):
+        """User clicked the pin. The window is mapped here by definition, so
+        the state change applies immediately with no deferral."""
+        self._is_pinned = pinned
+        xwm.set_always_on_top(self, pinned)
+        self._save()
 
     def _reapply_initial_position(self):
         """Re-assert the position captured at init. Called via QTimer on
@@ -1022,6 +1109,7 @@ class StickyNote(QWidget):
         bg_layout.setSpacing(0)
 
         self.title_bar = TitleBar(self.bg_widget)
+        self.title_bar.pinToggled.connect(self._on_pin_toggled)
         self.title_bar.newNoteRequested.connect(
             lambda: self.newNoteRequested.emit(self._theme_name)
         )
@@ -1070,17 +1158,33 @@ class StickyNote(QWidget):
         # QTextEdit doesn't bind Ctrl+B/I/U on its own — wire them explicitly.
         # WidgetWithChildrenShortcut so the shortcut still fires if a child
         # widget (e.g. scroll bar) momentarily holds focus.
+        # Key sequences come from config.SHORTCUTS — the same dict FormatBar
+        # reads for its tooltips, so a rebinding updates both at once.
         ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
-        for keys, slot in (
-            ("Ctrl+B",       self._toggle_bold),
-            ("Ctrl+I",       self._toggle_italic),
-            ("Ctrl+U",       self._toggle_underline),
-            ("Ctrl+Shift+S", self._toggle_strike),
-            ("Ctrl+Shift+L", self._toggle_bullet_list),
+        for key, slot in (
+            ("bold",      self._toggle_bold),
+            ("italic",    self._toggle_italic),
+            ("underline", self._toggle_underline),
+            ("strike",    self._toggle_strike),
+            ("bullet",    self._toggle_bullet_list),
         ):
-            sc = QShortcut(QKeySequence(keys), self.text_edit)
+            sc = QShortcut(QKeySequence(config.SHORTCUTS[key]), self.text_edit)
             sc.setContext(ctx)
             sc.activated.connect(slot)
+
+        # Ctrl+N is a note-level action, not a text-formatting one, so it hangs
+        # off the window with WindowShortcut context — it should fire wherever
+        # focus sits inside the note, including the title editor, not just the
+        # body. Emits the same signal the + button does (and with the current
+        # theme) so a keyboard-created note is indistinguishable from a clicked
+        # one. Note this is window-scoped, not system-global: with every note
+        # closed there's no focused window to receive it, which is what the
+        # tray menu's "New Note" is for.
+        new_sc = QShortcut(QKeySequence(config.SHORTCUTS["new_note"]), self)
+        new_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        new_sc.activated.connect(
+            lambda: self.newNoteRequested.emit(self._theme_name)
+        )
 
     def _setup_autosave(self):
         self._autosave_timer = QTimer(self)
@@ -1581,6 +1685,7 @@ class StickyNote(QWidget):
         settings.setValue(f"{self.note_id}/collapsed",   self._is_collapsed)
         settings.setValue(f"{self.note_id}/title",       self._title)
         settings.setValue(f"{self.note_id}/last_edited", self._last_edited)
+        settings.setValue(f"{self.note_id}/pinned",      self._is_pinned)
         settings.endGroup()
 
     def closeEvent(self, event):
@@ -1686,6 +1791,93 @@ class AboutDialog(QDialog):
         layout.addWidget(footer)
 
         # Close button — bottom-right, conventional dialog placement
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+
+# ---------------------------------------------------------------------------
+# ShortcutsDialog — the app's only permanent record of how to drive it.
+#
+# Exists because nothing else in the running app documents this. The welcome
+# note covers some of it but only appears on first launch and invites its own
+# deletion, so every existing install has no reference at all. Pull-based on
+# purpose: opened from the tray, never shown unprompted.
+#
+# Content comes from config.SHORTCUT_REFERENCE so the bound keys listed here are
+# literally the same strings passed to QShortcut.
+# ---------------------------------------------------------------------------
+class ShortcutsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Keyboard Shortcuts")
+        self.setModal(False)
+        self.setFixedWidth(430)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 18)
+        layout.setSpacing(4)
+
+        # Dialogs follow the system palette, not a note theme, so the keycap
+        # chips have to be chosen against whatever the desktop is running.
+        window_bg = self.palette().color(QPalette.ColorRole.Window)
+        keycap = (
+            config.KEYCAP_DARK if window_bg.lightness() < 128
+            else config.KEYCAP_LIGHT
+        )
+        keycap_css = f"""
+            font-family: monospace;
+            font-size: 9pt;
+            background-color: {keycap['bg']};
+            color: {keycap['text']};
+            border: 1px solid {keycap['border']};
+            border-radius: 4px;
+            padding: 2px 6px;
+        """
+
+        for index, (section, rows) in enumerate(config.SHORTCUT_REFERENCE):
+            if index:
+                layout.addSpacing(14)
+            heading = QLabel(section)
+            heading.setStyleSheet(
+                "font-size: 11pt; font-weight: 600; color: #888;"
+            )
+            layout.addWidget(heading)
+            layout.addSpacing(2)
+
+            # One grid per section keeps each section's key column sized to its
+            # own content — a single shared grid would stretch every key cell to
+            # fit "Drag any edge or corner".
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(14)
+            grid.setVerticalSpacing(6)
+            grid.setColumnStretch(1, 1)
+            for row, (keys, what) in enumerate(rows):
+                key_label = QLabel(keys)
+                key_label.setStyleSheet(keycap_css)
+                # Keep the keycap tight to its text instead of filling the cell.
+                key_label.setSizePolicy(
+                    QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+                )
+                desc = QLabel(what)
+                desc.setWordWrap(True)
+                desc.setStyleSheet("font-size: 10pt;")
+                grid.addWidget(key_label, row, 0, Qt.AlignmentFlag.AlignLeft)
+                grid.addWidget(desc, row, 1)
+            layout.addLayout(grid)
+
+            if section == "Lists":
+                note = QLabel(config.SHORTCUT_REFERENCE_FOOTNOTE)
+                note.setWordWrap(True)
+                note.setStyleSheet("color: #888; font-size: 9pt;")
+                layout.addSpacing(6)
+                layout.addWidget(note)
+
+        layout.addSpacing(16)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         close_btn = QPushButton("Close")

@@ -53,6 +53,67 @@ SHADOW_BODY_EXPANDED  = (24, 5, 130)
 SHADOW_BODY_COLLAPSED = (14, 4, 175)
 SHADOW_PANEL          = (16, 4, 80)
 
+# Bound shortcuts — single source of truth for every QShortcut the app installs.
+#
+# Consumed by StickyNote._setup_shortcuts (which binds them), FormatBar (which
+# shows them in tooltips), and SHORTCUT_REFERENCE below (which lists them in the
+# Keyboard Shortcuts dialog). One dict means a rebinding can't leave any of
+# those three advertising a key that no longer works.
+#
+# The formatting keys match FormatBar button attribute names (bold_btn -> "bold").
+SHORTCUTS = {
+    "new_note":  "Ctrl+N",
+    "bold":      "Ctrl+B",
+    "italic":    "Ctrl+I",
+    "underline": "Ctrl+U",
+    "strike":    "Ctrl+Shift+S",
+    "bullet":    "Ctrl+Shift+L",
+}
+
+# Reference table rendered by ShortcutsDialog: [(section, [(keys, what)])].
+#
+# Deliberately broader than SHORTCUTS. The genuinely undiscoverable interactions
+# in this app aren't QShortcuts at all — Tab/Shift+Tab/Shift+Enter are handled in
+# NoteTextEdit.keyPressEvent, and collapse/rename/resize are mouse gestures. A
+# dialog that listed only the bound keys would omit exactly the features users
+# never find. Bound entries index SHORTCUTS so they can't drift.
+SHORTCUT_REFERENCE = [
+    ("Notes", [
+        (SHORTCUTS["new_note"],     "New note"),
+        ("Double-click title bar",  "Collapse or expand a note"),
+        ("Click the title",         "Rename a note"),
+        ("Drag any edge or corner", "Resize a note"),
+    ]),
+    ("Formatting", [
+        (SHORTCUTS["bold"],      "Bold"),
+        (SHORTCUTS["italic"],    "Italic"),
+        (SHORTCUTS["underline"], "Underline"),
+        (SHORTCUTS["strike"],    "Strikethrough"),
+    ]),
+    ("Lists", [
+        (SHORTCUTS["bullet"], "Toggle bullet list"),
+        # No ●→○→■ glyphs here: U+25A0 falls through to an emoji font on common
+        # Linux setups and renders as a coloured box. Described in words instead.
+        ("Tab",               "Indent to a sublist (bullet style changes each level)"),
+        ("Shift+Tab",         "Outdent"),
+        ("Shift+Enter",       "Break out of the list"),
+    ]),
+]
+
+# Shown under the Lists section. Tab does nothing outside a list (it inserts a
+# plain tab), so without this the entry reads as broken.
+SHORTCUT_REFERENCE_FOOTNOTE = (
+    "Tab, Shift+Tab, and Shift+Enter apply while the cursor is inside a list."
+)
+
+# Keycap chips in ShortcutsDialog. Unlike notes, dialogs inherit the SYSTEM
+# palette, which may be light or dark — so these can't be a single hardcoded
+# pair. A light chip with no explicit text colour renders invisible on a dark
+# desktop theme (light text on a light chip), which is exactly what happens if
+# you only style the background. Picked at runtime from the dialog's own palette.
+KEYCAP_LIGHT = {"bg": "#f0f0f0", "border": "#d8d8d8", "text": "#333333"}
+KEYCAP_DARK  = {"bg": "#3a3a3a", "border": "#555555", "text": "#f0f0f0"}
+
 # Tooltips — app-wide chrome, deliberately NOT per-theme.
 #
 # Every button on a note is icon-only or a single letter, so tooltips are the

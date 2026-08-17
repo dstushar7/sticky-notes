@@ -6,7 +6,7 @@ import sys
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction, QGuiApplication
 from PyQt6.QtCore import QSettings, QTimer
-from .note_window import StickyNote, SettingsDialog, AboutDialog
+from .note_window import StickyNote, SettingsDialog, AboutDialog, ShortcutsDialog
 from . import autostart
 from . import utils
 from . import config
@@ -30,6 +30,7 @@ class TrayManager:
         self.open_notes = {}
         self._settings_dialog = None
         self._about_dialog = None
+        self._shortcuts_dialog = None
 
         self.app.setQuitOnLastWindowClosed(False)
         # app.quit() does not call closeEvent on individual windows, so any
@@ -162,6 +163,12 @@ class TrayManager:
         settings_action.triggered.connect(self._show_settings)
         self.menu.addAction(settings_action)
 
+        # Sits between Settings and About, the conventional slot for a reference
+        # entry: Settings changes things, this only explains them.
+        shortcuts_action = QAction("Keyboard Shortcuts", parent=self.menu)
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        self.menu.addAction(shortcuts_action)
+
         about_action = QAction("About Sticky Notes", parent=self.menu)
         about_action.triggered.connect(self._show_about)
         self.menu.addAction(about_action)
@@ -222,10 +229,12 @@ class TrayManager:
         collapsed=False,
         title=None,
         last_edited=None,
+        pinned=False,
     ):
         theme = theme or config.DEFAULT_THEME
         note = StickyNote(
-            note_id, content, geometry_data, theme, collapsed, title, last_edited
+            note_id, content, geometry_data, theme, collapsed, title, last_edited,
+            pinned,
         )
         note.noteDeleted.connect(self._handle_note_deletion)
         note.newNoteRequested.connect(self._new_note_from_signal)
@@ -268,6 +277,17 @@ class TrayManager:
         self._about_dialog = dlg
         dlg.show()
 
+    def _show_shortcuts(self):
+        # Same reuse-once pattern as Settings and About.
+        if self._shortcuts_dialog is not None and self._shortcuts_dialog.isVisible():
+            self._shortcuts_dialog.raise_()
+            self._shortcuts_dialog.activateWindow()
+            return
+        dlg = ShortcutsDialog()
+        dlg.finished.connect(lambda _r: setattr(self, "_shortcuts_dialog", None))
+        self._shortcuts_dialog = dlg
+        dlg.show()
+
     def _show_all_notes(self):
         if not self.open_notes:
             self._create_new_note()
@@ -293,6 +313,9 @@ class TrayManager:
             content   = settings.value(f"{note_id}/content", "")
             theme     = settings.value(f"{note_id}/theme", config.DEFAULT_THEME)
             collapsed = settings.value(f"{note_id}/collapsed", False, type=bool)
+            # New in this schema. Defaults False, so every existing note loads
+            # exactly as before — nothing becomes pinned on upgrade.
+            pinned    = settings.value(f"{note_id}/pinned", False, type=bool)
 
             # New fields in this schema. Both default to None so legacy notes
             # get the "smart default" behavior in StickyNote.__init__ —
@@ -314,6 +337,7 @@ class TrayManager:
                     geometry = (int(x), int(y), int(w), int(h))
 
             self._create_new_note(
-                note_id, content, geometry, theme, collapsed, title, last_edited
+                note_id, content, geometry, theme, collapsed, title, last_edited,
+                pinned,
             )
         settings.endGroup()

@@ -1,6 +1,6 @@
 # stickynotes/utils.py
 
-from PyQt6.QtGui import QPainter, QColor, QPixmap, QIcon, QPen
+from PyQt6.QtGui import QPainter, QColor, QPixmap, QIcon, QPen, QPolygonF
 from PyQt6.QtCore import Qt, QPointF, QRectF
 from . import config
 
@@ -43,6 +43,60 @@ def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
         # Bar (rounded ends)
         bar_rect = QRectF(bar_x, cy - bar_h / 2, bar_w, bar_h)
         p.drawRoundedRect(bar_rect, bar_h / 2, bar_h / 2)
+
+    p.end()
+    return QIcon(pm)
+
+
+def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
+    """A thumbtack: round head, flange, and a stubby needle.
+
+    Painted rather than drawn from a font glyph on purpose — 📌 and 📍 resolve
+    to a colour emoji font on most Linux setups, which ignores the button's
+    theme colour and renders as a coloured blob at small sizes. Same reason
+    create_bullet_list_icon exists.
+
+    `filled` carries the pinned/unpinned state. FloatingButton's :checked
+    background alone is too subtle to read at a glance on the lighter themes
+    (idle glass is 0.55 alpha vs 0.85 checked), so the icon itself changes:
+    solid when pinned, outline when not. Same convention as a bookmark toggle.
+    """
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    qcolor = QColor(color)
+
+    if filled:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(qcolor)
+    else:
+        pen = QPen(qcolor)
+        # Scale the stroke with the icon so the outline stays visible at 16px
+        # without going chunky at 24px.
+        pen.setWidthF(max(1.2, size * 0.085))
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+    cx = size / 2
+    head_r = size * 0.235          # bigger head reads as a tack, not a balloon
+    head_cy = size * 0.31
+    flange_half = size * 0.30      # wide shoulder under the head
+    flange_y = head_cy + head_r * 0.85
+    needle_half = size * 0.055
+    tip_y = size * 0.90
+
+    p.drawEllipse(QPointF(cx, head_cy), head_r, head_r)
+    # Flange + needle as one silhouette: a wide shoulder tapering to a point.
+    # The shoulder is what distinguishes a thumbtack from a lollipop.
+    p.drawPolygon(QPolygonF([
+        QPointF(cx - flange_half, flange_y),
+        QPointF(cx + flange_half, flange_y),
+        QPointF(cx + needle_half, flange_y + size * 0.10),
+        QPointF(cx,               tip_y),
+        QPointF(cx - needle_half, flange_y + size * 0.10),
+    ]))
 
     p.end()
     return QIcon(pm)
