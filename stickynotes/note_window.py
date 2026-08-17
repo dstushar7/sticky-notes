@@ -13,8 +13,8 @@ from PyQt6.QtCore import (
     QEvent, QTimer,
 )
 from PyQt6.QtGui import (
-    QColor, QTextListFormat, QTextCursor, QKeySequence, QShortcut, QFont,
-    QFontMetrics, QDesktopServices, QPalette,
+    QColor, QTextListFormat, QTextBlockFormat, QTextCursor, QKeySequence,
+    QShortcut, QFont, QFontMetrics, QDesktopServices, QPalette,
 )
 
 from . import __version__
@@ -54,6 +54,37 @@ _LIST_STYLES = (
 
 def _style_for_indent(indent: int) -> QTextListFormat.Style:
     return _LIST_STYLES[(max(1, indent) - 1) % len(_LIST_STYLES)]
+
+
+# ---------------------------------------------------------------------------
+# Checklists
+#
+# A checklist is an ordinary QTextList whose blocks additionally carry a
+# QTextBlockFormat marker (Checked/Unchecked). Two properties of Qt make this
+# the cheap implementation rather than a custom widget:
+#
+#   * The marker REPLACES the list bullet when rendered, so the underlying
+#     style (ListDisc) never shows through — no doubled glyph.
+#   * Markers survive toHtml()/setHtml() as <li class="checked|unchecked">,
+#     which is exactly the persistence format StickyNote._save already uses.
+#     Checkbox state therefore round-trips with zero changes to save/load.
+#
+# So "is this a checklist item?" is simply "is it a list item with a marker?"
+# ---------------------------------------------------------------------------
+_MARKER_NONE = QTextBlockFormat.MarkerType.NoMarker
+_MARKER_UNCHECKED = QTextBlockFormat.MarkerType.Unchecked
+_MARKER_CHECKED = QTextBlockFormat.MarkerType.Checked
+
+
+def _is_checklist_block(block) -> bool:
+    """True if `block` is a list item carrying a checkbox marker."""
+    if not block.isValid() or block.textList() is None:
+        return False
+    return block.blockFormat().marker() != _MARKER_NONE
+
+
+def _cursor_in_checklist(cursor: QTextCursor) -> bool:
+    return _is_checklist_block(cursor.block())
 
 # ---------------------------------------------------------------------------
 # Resize zone ids
@@ -108,7 +139,54 @@ class NoteTextEdit(QTextEdit):
             self._break_out_of_list()
             return
 
+        # Enter inside a checklist — Qt copies the whole block format to the
+        # new block, INCLUDING the marker, so pressing Enter after a ticked
+        # item would hand you a new item that is already ticked. Let Qt build
+        # the item, then force it back to unchecked.
+        if (
+            key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and not (mods & Qt.KeyboardModifier.ShiftModifier)
+            and _is_checklist_block(cursor.block())
+        ):
+            super().keyPressEvent(event)
+            new_cursor = self.textCursor()
+            fmt = new_cursor.blockFormat()
+            if fmt.marker() == _MARKER_CHECKED:
+                fmt.setMarker(_MARKER_UNCHECKED)
+                new_cursor.setBlockFormat(fmt)
+            return
+
         super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        """Tick/untick a checklist item by clicking its checkbox.
+
+        The marker is painted in the indent slot immediately left of the text,
+        so the hit area is the band [text_start - indentWidth, text_start).
+        Restricting it to that band (rather than 'anything left of the text')
+        keeps a click in a nested item's outer indent from toggling it.
+        """
+        if event.button() == Qt.MouseButton.LeftButton:
+            block = self.cursorForPosition(event.pos()).block()
+            if _is_checklist_block(block):
+                text_x = self.cursorRect(QTextCursor(block)).left()
+                band = self.document().indentWidth() or config.LIST_INDENT_PX
+                if text_x - band <= event.pos().x() < text_x:
+                    self._toggle_marker(block)
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
+    def _toggle_marker(self, block):
+        """Flip one checklist item between checked and unchecked. Edits the
+        document, so it flows through textChanged -> autosave like any edit."""
+        cursor = QTextCursor(block)
+        fmt = cursor.blockFormat()
+        fmt.setMarker(
+            _MARKER_UNCHECKED if fmt.marker() == _MARKER_CHECKED
+            else _MARKER_CHECKED
+        )
+        cursor.setBlockFormat(fmt)
 
     def _break_out_of_list(self):
         cursor = self.textCursor()
@@ -797,6 +875,7 @@ class FormatBar(QWidget):
     underlineClicked = pyqtSignal()
     strikeClicked    = pyqtSignal()
     bulletClicked    = pyqtSignal()
+    checklistClicked = pyqtSignal()
 
     # Defaults — buttons scale around these via apply_size()
     BTN_MIN, BTN_DEFAULT, BTN_MAX = 24, 30, 44
@@ -829,6 +908,9 @@ class FormatBar(QWidget):
         # by experiment — this button is the one place the hint is relevant.
         self.bullet_btn    = self._make_btn("", "bulletBtn",     "",                              "Bullet list", "bullet",
                                             hint="Tab to indent")
+        # Also icon-only, same reasoning as the bullet button.
+        self.checklist_btn = self._make_btn("", "checklistBtn",  "",                              "Checklist", "checklist",
+                                            hint="click a box to tick it")
 
         layout.addStretch()
         for btn in self._buttons():
@@ -840,10 +922,11 @@ class FormatBar(QWidget):
         self.underline_btn.clicked.connect(self.underlineClicked.emit)
         self.strike_btn.clicked.connect(self.strikeClicked.emit)
         self.bullet_btn.clicked.connect(self.bulletClicked.emit)
+        self.checklist_btn.clicked.connect(self.checklistClicked.emit)
 
     def _buttons(self):
         return (self.bold_btn, self.italic_btn, self.underline_btn,
-                self.strike_btn, self.bullet_btn)
+                self.strike_btn, self.bullet_btn, self.checklist_btn)
 
     @staticmethod
     def _make_btn(label: str, name: str, extra_css: str, tooltip: str = "",
@@ -899,10 +982,12 @@ class FormatBar(QWidget):
             btn.set_font_css(font_css)
         FloatingButton.apply_theme_to_all(self._buttons(), btn_color, is_dark_theme)
 
-        # Painted bullet-list icon, recolored to match the current btn_color
+        # Painted list icons, recolored to match the current btn_color
         icon_px = max(14, int(self._btn_size * 0.7))
         self.bullet_btn.setIcon(utils.create_bullet_list_icon(btn_color, icon_px))
         self.bullet_btn.setIconSize(QSize(icon_px, icon_px))
+        self.checklist_btn.setIcon(utils.create_checklist_icon(btn_color, icon_px))
+        self.checklist_btn.setIconSize(QSize(icon_px, icon_px))
 
 
 # ---------------------------------------------------------------------------
@@ -1133,6 +1218,7 @@ class StickyNote(QWidget):
         self.format_bar.underlineClicked.connect(self._toggle_underline)
         self.format_bar.strikeClicked.connect(self._toggle_strike)
         self.format_bar.bulletClicked.connect(self._toggle_bullet_list)
+        self.format_bar.checklistClicked.connect(self._toggle_checklist)
         bg_layout.addWidget(self.format_bar)
 
         # Reflect cursor's current formatting in the toolbar's checked state.
@@ -1167,6 +1253,7 @@ class StickyNote(QWidget):
             ("underline", self._toggle_underline),
             ("strike",    self._toggle_strike),
             ("bullet",    self._toggle_bullet_list),
+            ("checklist", self._toggle_checklist),
         ):
             sc = QShortcut(QKeySequence(config.SHORTCUTS[key]), self.text_edit)
             sc.setContext(ctx)
@@ -1422,15 +1509,93 @@ class StickyNote(QWidget):
         fmt.setFontStrikeOut(not fmt.fontStrikeOut())
         self.text_edit.mergeCurrentCharFormat(fmt)
 
+    @staticmethod
+    def _new_list_format() -> QTextListFormat:
+        list_fmt = QTextListFormat()
+        list_fmt.setStyle(QTextListFormat.Style.ListDisc)
+        list_fmt.setIndent(1)
+        return list_fmt
+
+    def _expand_to_list_region(self, cursor: QTextCursor) -> QTextCursor:
+        """Widen `cursor` to span the whole contiguous run of list blocks around
+        it. Returns the cursor unchanged if it isn't in a list.
+
+        Used for marker conversions only. A list must be entirely checkboxes or
+        entirely bullets — converting just the block under the caret leaves a
+        list rendering a checkbox next to a disc, which looks broken.
+
+        Walks adjacent blocks rather than using QTextList.item(): Tab-indenting
+        creates a *separate* QTextList for the nested level, so asking the
+        current list for its items would miss sublists. The contiguous-block
+        run matches what the user perceives as "this list".
+        """
+        block = cursor.block()
+        if block.textList() is None:
+            return cursor
+
+        first = block
+        while first.previous().isValid() and first.previous().textList() is not None:
+            first = first.previous()
+        last = block
+        while last.next().isValid() and last.next().textList() is not None:
+            last = last.next()
+
+        region = QTextCursor(self.text_edit.document())
+        region.setPosition(first.position())
+        region.setPosition(
+            last.position() + last.length() - 1,
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        return region
+
+    def _set_markers(self, cursor: QTextCursor, marker):
+        """Apply `marker` to every block the cursor spans. Mirrors the
+        selection walk in _remove_list so multi-line selections convert as a
+        unit rather than only the block under the caret."""
+        start, end = cursor.selectionStart(), cursor.selectionEnd()
+        walker = QTextCursor(cursor)
+        walker.setPosition(start)
+        while True:
+            fmt = walker.blockFormat()
+            fmt.setMarker(marker)
+            walker.setBlockFormat(fmt)
+            if walker.position() >= end:
+                break
+            if not walker.movePosition(QTextCursor.MoveOperation.NextBlock):
+                break
+
+    # Two rules keep these two buttons predictable:
+    #   * Marker conversions (bullet <-> checklist) span the WHOLE list, so a
+    #     list is never half checkboxes and half bullets.
+    #   * Removing items from a list keeps the existing per-selection scope,
+    #     unchanged from before checklists existed.
+
     def _toggle_bullet_list(self):
         cursor = self.text_edit.textCursor()
-        if cursor.currentList():
+        if _cursor_in_checklist(cursor):
+            # Checklist -> plain bullets: strip markers, keep the list. The
+            # bullet button converts between list kinds rather than silently
+            # destroying the user's list structure.
+            self._set_markers(self._expand_to_list_region(cursor), _MARKER_NONE)
+        elif cursor.currentList():
             self._remove_list(cursor)
         else:
-            list_fmt = QTextListFormat()
-            list_fmt.setStyle(QTextListFormat.Style.ListDisc)
-            list_fmt.setIndent(1)
-            cursor.createList(list_fmt)
+            cursor.createList(self._new_list_format())
+        self._refresh_format_bar()
+
+    def _toggle_checklist(self):
+        """Mirror of _toggle_bullet_list, for checkbox lists."""
+        cursor = self.text_edit.textCursor()
+        if _cursor_in_checklist(cursor):
+            self._remove_list(cursor)
+        elif cursor.currentList():
+            # Bullet list -> checklist. New boxes start unticked.
+            self._set_markers(
+                self._expand_to_list_region(cursor), _MARKER_UNCHECKED
+            )
+        else:
+            cursor.createList(self._new_list_format())
+            self._set_markers(self.text_edit.textCursor(), _MARKER_UNCHECKED)
         self._refresh_format_bar()
 
     def _refresh_format_bar(self):
@@ -1441,7 +1606,13 @@ class StickyNote(QWidget):
         self.format_bar.italic_btn.setChecked(fmt.fontItalic())
         self.format_bar.underline_btn.setChecked(fmt.fontUnderline())
         self.format_bar.strike_btn.setChecked(fmt.fontStrikeOut())
-        self.format_bar.bullet_btn.setChecked(cursor.currentList() is not None)
+        # The two list buttons are mutually exclusive: a list either has
+        # checkbox markers or it doesn't.
+        in_checklist = _cursor_in_checklist(cursor)
+        self.format_bar.bullet_btn.setChecked(
+            cursor.currentList() is not None and not in_checklist
+        )
+        self.format_bar.checklist_btn.setChecked(in_checklist)
 
     def _refresh_title_display(self):
         """Push the current `_title` value to the title bar."""
@@ -1493,6 +1664,9 @@ class StickyNote(QWidget):
                 lst.remove(block)
             fmt = block.blockFormat()
             fmt.setIndent(0)
+            # Clear any checkbox marker too — a marker left on a non-list block
+            # would keep painting a stale checkbox after the list is gone.
+            fmt.setMarker(_MARKER_NONE)
             cursor.setBlockFormat(fmt)
             if cursor.position() >= end:
                 break

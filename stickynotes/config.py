@@ -68,6 +68,7 @@ SHORTCUTS = {
     "underline": "Ctrl+U",
     "strike":    "Ctrl+Shift+S",
     "bullet":    "Ctrl+Shift+L",
+    "checklist": "Ctrl+Shift+K",
 }
 
 # Reference table rendered by ShortcutsDialog: [(section, [(keys, what)])].
@@ -92,6 +93,8 @@ SHORTCUT_REFERENCE = [
     ]),
     ("Lists", [
         (SHORTCUTS["bullet"], "Toggle bullet list"),
+        (SHORTCUTS["checklist"], "Toggle checklist"),
+        ("Click a checkbox",  "Tick or untick that item"),
         # No ●→○→■ glyphs here: U+25A0 falls through to an emoji font on common
         # Linux setups and renders as a coloured box. Described in words instead.
         ("Tab",               "Indent to a sublist (bullet style changes each level)"),
