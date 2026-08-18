@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTextEdit, QPushButton,
     QLabel, QLineEdit, QStackedLayout, QSizePolicy, QGraphicsDropShadowEffect,
-    QApplication, QDialog, QCheckBox, QFrame,
+    QApplication, QDialog, QCheckBox, QFrame, QSystemTrayIcon,
 )
 from PyQt6.QtCore import (
     QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray, QUrl,
@@ -1051,6 +1051,7 @@ class StickyNote(QWidget):
         title=None,
         last_edited=None,
         pinned=False,
+        hide_from_dock=False,
         parent=None,
     ):
         super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
@@ -1063,6 +1064,7 @@ class StickyNote(QWidget):
         self._is_being_deleted = False
         self._theme_name = theme
         self._is_pinned = bool(pinned)
+        self._hide_from_dock = bool(hide_from_dock)
         self._is_collapsed = False
         self._pre_collapse_height = 250
         self._options_panel = None
@@ -1152,6 +1154,15 @@ class StickyNote(QWidget):
         if geometry_data is not None:
             xwm.mark_position_user_requested(self)
 
+        # Assert WM states BEFORE the window is first mapped. Mutter honours
+        # whatever _NET_WM_STATE is present at map time, so doing it here means
+        # a pinned note is never briefly un-pinned and a dock-hidden note never
+        # flashes into the dock before disappearing. showEvent re-asserts these
+        # afterwards, because Mutter clears the property again on every unmap.
+        xwm.set_initial_wm_states(
+            self, above=self._is_pinned, skip_taskbar=self._hide_from_dock
+        )
+
         # Install event filter on children after UI is built
         for child in self.findChildren(QWidget):
             child.setMouseTracking(True)
@@ -1197,6 +1208,16 @@ class StickyNote(QWidget):
         super().showEvent(event)
         if self._is_pinned:
             QTimer.singleShot(0, lambda: xwm.set_always_on_top(self, True))
+        if self._hide_from_dock:
+            QTimer.singleShot(0, lambda: xwm.set_skip_taskbar(self, True))
+
+    def set_hidden_from_dock(self, hidden: bool):
+        """Apply the app-global dock preference to this note. Called by
+        TrayManager for every open note when the Settings toggle changes —
+        the dock lists an app as running if ANY of its windows is visible, so
+        this only has an effect when every note agrees."""
+        self._hide_from_dock = bool(hidden)
+        xwm.set_skip_taskbar(self, self._hide_from_dock)
 
     def _on_pin_toggled(self, pinned: bool):
         """User clicked the pin. The window is mapped here by definition, so
@@ -2108,13 +2129,20 @@ class ShortcutsDialog(QDialog):
 # SettingsDialog — global app preferences (opened from the tray menu)
 # ---------------------------------------------------------------------------
 class SettingsDialog(QDialog):
+    # Emitted when the dock preference changes. TrayManager listens and pushes
+    # the new value to every open note; the dialog itself owns no notes.
+    hideFromDockChanged = pyqtSignal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Plain "Settings" — desktop shells prepend the app name themselves,
         # so a longer title gets duplicated and truncated by the WM.
         self.setWindowTitle("Settings")
         self.setModal(False)
-        self.resize(380, 180)
+        # Width fixed, height derived from content (see adjustSize at the end of
+        # __init__). The old hard-coded 380x180 predates the second setting and
+        # clipped its wrapped explanation text.
+        self.setMinimumWidth(400)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 18)
@@ -2128,6 +2156,40 @@ class SettingsDialog(QDialog):
         self.autostart_cb.setChecked(autostart.is_enabled())
         self.autostart_cb.toggled.connect(self._on_autostart_toggled)
         layout.addWidget(self.autostart_cb)
+
+        self.hide_dock_cb = QCheckBox("Hide notes from the dock and taskbar")
+        settings = QSettings(config.ORG_NAME, config.APP_NAME)
+        self.hide_dock_cb.setChecked(
+            settings.value(config.SETTING_HIDE_FROM_DOCK, False, type=bool)
+        )
+        self.hide_dock_cb.toggled.connect(self._on_hide_dock_toggled)
+        layout.addWidget(self.hide_dock_cb)
+
+        self.hide_dock_note = QLabel(
+            "Notes stay open and reachable from the tray. This also removes "
+            "them from Alt-Tab."
+        )
+        self.hide_dock_note.setWordWrap(True)
+        self.hide_dock_note.setStyleSheet("color: #888; font-size: 9pt;")
+        layout.addWidget(self.hide_dock_note)
+
+        # Two hard requirements, each a way to strand the user with no route
+        # back to their notes:
+        #   * no system tray -> hiding from the dock removes the LAST way to
+        #     reach the app, including this dialog, which is opened from the
+        #     tray. Unrecoverable without hand-editing the config file.
+        #   * not on xcb -> always-on-top and skip-taskbar are EWMH states;
+        #     native Wayland has no protocol for either, so the toggle would
+        #     silently do nothing.
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self._disable_hide_dock(
+                "Unavailable: no system tray on this desktop, so hiding the "
+                "dock icon would leave no way to reach your notes."
+            )
+        elif QApplication.platformName() != "xcb":
+            self._disable_hide_dock(
+                "Unavailable: hiding from the dock needs X11 or XWayland."
+            )
 
         self.status = QLabel("")
         self.status.setStyleSheet("color: #cc0000; font-size: 9pt;")
@@ -2143,6 +2205,30 @@ class SettingsDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
+
+        # Size to whichever explanation text is actually showing — the guarded
+        # messages are longer than the normal one and wrap to more lines.
+        self.adjustSize()
+
+    def _disable_hide_dock(self, reason: str):
+        # Show it unchecked, because it genuinely isn't in effect — but block
+        # signals while doing so. Without this, setChecked(False) fires
+        # _on_hide_dock_toggled and ERASES the user's stored preference just
+        # for opening Settings on a machine with no tray. The value has to
+        # survive so it takes effect again once a tray is back.
+        self.hide_dock_cb.blockSignals(True)
+        self.hide_dock_cb.setChecked(False)
+        self.hide_dock_cb.blockSignals(False)
+        self.hide_dock_cb.setEnabled(False)
+        self.hide_dock_cb.setToolTip(reason)
+        self.hide_dock_note.setText(reason)
+        self.adjustSize()
+
+    def _on_hide_dock_toggled(self, checked: bool):
+        settings = QSettings(config.ORG_NAME, config.APP_NAME)
+        settings.setValue(config.SETTING_HIDE_FROM_DOCK, checked)
+        settings.sync()
+        self.hideFromDockChanged.emit(checked)
 
     def _on_autostart_toggled(self, checked: bool):
         try:

@@ -53,6 +53,11 @@ SHADOW_BODY_EXPANDED  = (24, 5, 130)
 SHADOW_BODY_COLLAPSED = (14, 4, 175)
 SHADOW_PANEL          = (16, 4, 80)
 
+# QSettings key for the app-global "hide notes from the dock" preference.
+# App-level, deliberately not per-note: the dock shows an app as running if ANY
+# of its windows is listed, so hiding only some notes would achieve nothing.
+SETTING_HIDE_FROM_DOCK = "hide_from_dock"
+
 # Bound shortcuts — single source of truth for every QShortcut the app installs.
 #
 # Consumed by StickyNote._setup_shortcuts (which binds them), FormatBar (which

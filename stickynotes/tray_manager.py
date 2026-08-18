@@ -86,6 +86,34 @@ class TrayManager:
             except OSError:
                 pass  # leave the stale file rather than crash on startup
 
+    def _hide_from_dock_enabled(self) -> bool:
+        """The effective dock preference for this session.
+
+        Fails SAFE. The stored value is only honoured when there is actually a
+        system tray and we're on xcb; otherwise notes stay visible in the dock.
+        That matters because the tray is the only route back to a dock-hidden
+        app, and Settings itself is opened from the tray — so a user who
+        enabled this and later lost their tray (extension removed, different
+        desktop, switched to native Wayland) would otherwise be locked out of
+        their own notes with no way to undo it.
+
+        The stored value is deliberately left untouched, so the preference
+        comes back on its own once a tray is available again.
+        """
+        settings = QSettings(config.ORG_NAME, config.APP_NAME)
+        if not settings.value(config.SETTING_HIDE_FROM_DOCK, False, type=bool):
+            return False
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return False
+        return QApplication.platformName() == "xcb"
+
+    def _apply_hide_from_dock(self, hidden: bool):
+        """Push the preference to every open note. The dock lists an app as
+        running if ANY of its windows is listed, so this only takes effect when
+        all notes agree — which is why the setting is app-global."""
+        for note in self.open_notes.values():
+            note.set_hidden_from_dock(hidden)
+
     def _create_welcome_note(self):
         """First-launch onboarding note. Pre-filled with a short tour so a
         brand-new user discovers the non-obvious features (collapse,
@@ -234,7 +262,7 @@ class TrayManager:
         theme = theme or config.DEFAULT_THEME
         note = StickyNote(
             note_id, content, geometry_data, theme, collapsed, title, last_edited,
-            pinned,
+            pinned, self._hide_from_dock_enabled(),
         )
         note.noteDeleted.connect(self._handle_note_deletion)
         note.newNoteRequested.connect(self._new_note_from_signal)
@@ -262,6 +290,7 @@ class TrayManager:
             self._settings_dialog.activateWindow()
             return
         dlg = SettingsDialog()
+        dlg.hideFromDockChanged.connect(self._apply_hide_from_dock)
         dlg.finished.connect(lambda _r: setattr(self, "_settings_dialog", None))
         self._settings_dialog = dlg
         dlg.show()
