@@ -19,28 +19,28 @@
 from __future__ import annotations
 
 
-def set_always_on_top(widget, enabled: bool) -> bool:
-    """Add or remove _NET_WM_STATE_ABOVE on the widget's X11 window.
+# EWMH _NET_WM_STATE atoms we manage. Both are per-window states the window
+# manager owns; we ask it to change them rather than setting them ourselves.
+_STATE_ABOVE = "_NET_WM_STATE_ABOVE"
+_STATE_SKIP_TASKBAR = "_NET_WM_STATE_SKIP_TASKBAR"
+_STATE_SKIP_PAGER = "_NET_WM_STATE_SKIP_PAGER"
 
-    Deliberately NOT Qt's WindowStaysOnTopHint. Changing window flags on an
-    already-visible window makes Qt destroy and recreate the native X window,
-    which would (a) drop the USPosition hint set by
-    mark_position_user_requested below, reintroducing the Mutter
-    position-override bug, (b) reset geometry, and (c) visibly flicker. The
-    EWMH client message changes WM-held state without touching the window at
-    all — no recreation, no lost properties, no flicker.
 
-    Sends to the ROOT window (not our own): per EWMH, the window manager owns
+def _send_wm_state(widget, atom_names, enabled: bool) -> bool:
+    """Ask the WM to add or remove up to two _NET_WM_STATE atoms on `widget`.
+
+    Deliberately NOT Qt's window flags. Changing flags on an already-visible
+    window makes Qt destroy and recreate the native X window, which would
+    (a) drop the USPosition hint set by mark_position_user_requested below,
+    reintroducing the Mutter position-override bug, (b) reset geometry, and
+    (c) visibly flicker. The EWMH client message changes WM-held state without
+    touching the window at all.
+
+    Sends to the ROOT window, not our own: per EWMH the window manager owns
     _NET_WM_STATE and listens for change requests on root. Requires the window
-    to already be mapped, so callers apply this after show() — see
-    StickyNote.showEvent.
-
-    The state is persistent WM state, not a one-shot hint: it survives
-    workspace switches, minimise/restore, and other windows raising, until
-    something removes it.
-
-    Best-effort, matching the rest of this module: returns False and changes
-    nothing on native Wayland, without python-xlib, or if the WM ignores us.
+    to already be MAPPED — Mutter ignores these for unmapped windows, and in
+    fact clears _NET_WM_STATE entirely on unmap. See set_initial_wm_states for
+    the before-first-map path, and StickyNote.showEvent for re-assertion.
     """
     try:
         from Xlib import X, display
@@ -49,7 +49,6 @@ def set_always_on_top(widget, enabled: bool) -> bool:
         return False
 
     try:
-        # winId() forces native window creation if it hasn't happened yet.
         win_id = int(widget.winId())
         if win_id == 0:
             return False  # native Wayland, or creation failed
@@ -57,8 +56,9 @@ def set_always_on_top(widget, enabled: bool) -> bool:
         d = display.Display()
         try:
             xwin = d.create_resource_object("window", win_id)
-            net_wm_state = d.intern_atom("_NET_WM_STATE")
-            above = d.intern_atom("_NET_WM_STATE_ABOVE")
+            atoms = [d.intern_atom(n) for n in atom_names[:2]]
+            while len(atoms) < 2:
+                atoms.append(0)
 
             # EWMH _NET_WM_STATE message data:
             #   [0] action — 1 = _NET_WM_STATE_ADD, 0 = _NET_WM_STATE_REMOVE
@@ -66,11 +66,10 @@ def set_always_on_top(widget, enabled: bool) -> bool:
             #   [2] second property (0 = none)
             #   [3] source indication — 1 = normal application
             #   [4] unused
-            action = 1 if enabled else 0
             msg = event.ClientMessage(
                 window=xwin,
-                client_type=net_wm_state,
-                data=(32, [action, above, 0, 1, 0]),
+                client_type=d.intern_atom("_NET_WM_STATE"),
+                data=(32, [1 if enabled else 0, atoms[0], atoms[1], 1, 0]),
             )
             d.screen().root.send_event(
                 msg,
@@ -82,7 +81,76 @@ def set_always_on_top(widget, enabled: bool) -> bool:
             d.close()
     except Exception:
         # Same contract as mark_position_user_requested: a failed window hint
-        # must never take the app down. The note just won't stay on top.
+        # must never take the app down. The window just keeps its old state.
+        return False
+
+
+def set_always_on_top(widget, enabled: bool) -> bool:
+    """Keep the window above others (_NET_WM_STATE_ABOVE).
+
+    Persistent WM state, not a one-shot hint: it survives workspace switches,
+    minimise/restore and other windows raising, until something removes it.
+    """
+    return _send_wm_state(widget, [_STATE_ABOVE], enabled)
+
+
+def set_skip_taskbar(widget, enabled: bool) -> bool:
+    """Hide the window from the dock/taskbar and pager.
+
+    SKIP_PAGER rides along with SKIP_TASKBAR because a window absent from the
+    dock but still listed in the workspace switcher is a half-done job.
+
+    Caller beware: under Mutter this also removes the window from Alt-Tab —
+    the same flag drives both, and EWMH offers no way to separate them.
+    """
+    return _send_wm_state(
+        widget, [_STATE_SKIP_TASKBAR, _STATE_SKIP_PAGER], enabled
+    )
+
+
+def set_initial_wm_states(widget, above: bool = False,
+                          skip_taskbar: bool = False) -> bool:
+    """Write _NET_WM_STATE directly, for a window that has NOT been shown yet.
+
+    EWMH requires the WM to honour whatever _NET_WM_STATE is present on the
+    window when it maps it, and Mutter does. That matters for appearance:
+    applying these via client message after show() means a pinned note is
+    briefly not-on-top, and a hidden note flashes into the dock before
+    vanishing. Setting the property pre-map avoids both.
+
+    Replaces the whole property, so every desired state must be passed at once
+    — hence the flags rather than one call per state.
+    """
+    try:
+        from Xlib import Xatom, display
+    except ImportError:
+        return False
+
+    names = []
+    if above:
+        names.append(_STATE_ABOVE)
+    if skip_taskbar:
+        names.extend((_STATE_SKIP_TASKBAR, _STATE_SKIP_PAGER))
+    if not names:
+        return True  # nothing to assert; leaving the property unset is correct
+
+    try:
+        win_id = int(widget.winId())
+        if win_id == 0:
+            return False
+
+        d = display.Display()
+        try:
+            xwin = d.create_resource_object("window", win_id)
+            xwin.change_property(
+                d.intern_atom("_NET_WM_STATE"), Xatom.ATOM, 32,
+                [d.intern_atom(n) for n in names],
+            )
+            d.sync()
+            return True
+        finally:
+            d.close()
+    except Exception:
         return False
 
 
