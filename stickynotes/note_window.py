@@ -1742,13 +1742,42 @@ class StickyNote(QWidget):
     # ------------------------------------------------------------------
 
     def _get_resize_zone(self, local: QPoint) -> int:
+        """Which resize zone (if any) `local` falls in, in window coords.
+
+        The window is SHADOW_GUTTER px larger than the visible note on every
+        side — a transparent margin that exists purely to give the drop shadow
+        room to render. That margin still receives mouse events, so mapping the
+        resize band across it made every note grab clicks up to 12px outside
+        its visible edge, in what looks like bare desktop: a click target ~19%
+        larger than the note appears. That was issue #24 — users aiming at
+        something *next to* a note would silently start resizing it.
+
+        So the band is now clamped to the visible note. Its width inside the
+        note is unchanged, which is deliberate: the visible portion is the part
+        that already worked, and widening it inward would collide with the + and
+        ••• buttons (which start just 4px inside the edge) and with the
+        checklist marker gutter.
+        """
         x, y = local.x(), local.y()
-        w, h = self.width(), self.height()
+        g = config.SHADOW_GUTTER
+        vis_left, vis_top = g, g
+        vis_right, vis_bottom = self.width() - g, self.height() - g
+
+        # Outside the visible note: shadow only. Never a resize zone.
+        if not (vis_left <= x < vis_right and vis_top <= y < vis_bottom):
+            return _NONE
+
+        # Band width inside the note, and the original strict/non-strict
+        # comparisons preserved exactly. The near edges used `<` and the far
+        # edges `>`, which makes the far bands 1px narrower — keeping that
+        # asymmetry matters: widening the bottom band by even 1px puts it under
+        # the last row of the format-bar buttons.
         z = config.RESIZE_ZONE
-        left   = x < z
-        right  = x > w - z
-        top    = y < z
-        bottom = y > h - z
+        band = z - g
+        left   = x < vis_left + band
+        right  = x > vis_right - band
+        top    = y < vis_top + band
+        bottom = y > vis_bottom - band
         if top    and left:  return _NW
         if top    and right: return _NE
         if bottom and left:  return _SW
