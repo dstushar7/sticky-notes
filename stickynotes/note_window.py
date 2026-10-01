@@ -1381,6 +1381,18 @@ class StickyNote(QWidget):
         is_dark = text_color == "#f0f0f0"
         btn_color = "#cccccc" if is_dark else "#555555"
         hover_overlay = "rgba(255, 255, 255, 0.18)" if is_dark else "rgba(0, 0, 0, 0.12)"
+        # Scrollbar thumb: a translucent tint rather than a fixed color, so it
+        # reads as a deeper shade of whatever note color sits behind it.
+        if is_dark:
+            thumb, thumb_hover, thumb_pressed = (
+                "rgba(255, 255, 255, 0.22)", "rgba(255, 255, 255, 0.35)",
+                "rgba(255, 255, 255, 0.45)",
+            )
+        else:
+            thumb, thumb_hover, thumb_pressed = (
+                "rgba(0, 0, 0, 0.18)", "rgba(0, 0, 0, 0.30)",
+                "rgba(0, 0, 0, 0.40)",
+            )
 
         self.bg_widget.setStyleSheet(f"""
             QWidget#noteBackground {{
@@ -1396,6 +1408,34 @@ class StickyNote(QWidget):
                 color: {text_color};
                 border: none;
                 padding: 8px;
+            }}
+            /* Overlay-style scrollbar: transparent track, no arrow buttons,
+               thin rounded thumb. The 4px right margin keeps the thumb out
+               of the resize band at the note's right edge
+               (RESIZE_ZONE - SHADOW_GUTTER), so grabbing it never resizes. */
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 12px;
+                margin: 4px 4px 4px 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {thumb};
+                border-radius: 3px;
+                min-height: 28px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {thumb_hover};
+            }}
+            QScrollBar::handle:vertical:pressed {{
+                background: {thumb_pressed};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+                border: none;
+                background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
             }}
         """)
         font = QFont()
