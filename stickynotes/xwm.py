@@ -154,6 +154,68 @@ def set_initial_wm_states(widget, above: bool = False,
         return False
 
 
+# Motif WM hints (_MOTIF_WM_HINTS) — the de-facto standard for a client to
+# restrict which window-management functions the WM offers. Values from
+# Motif's MwmUtil.h; Mutter, KWin and xfwm4 all read them.
+_MWM_HINTS_FUNCTIONS = 1 << 0
+_MWM_HINTS_DECORATIONS = 1 << 1
+_MWM_FUNC_RESIZE = 1 << 1
+_MWM_FUNC_MOVE = 1 << 2
+_MWM_FUNC_MINIMIZE = 1 << 3
+_MWM_FUNC_CLOSE = 1 << 5
+
+
+def disable_maximize(widget) -> bool:
+    """Tell the WM this window can't be maximized — and therefore can't be
+    edge-tiled either.
+
+    Why: dragging a note to the top screen edge let Mutter maximize it. A
+    maximized window ignores our size requests, so collapsing then left the
+    title bar centered in an invisible, click-swallowing full-screen window.
+    Mutter only offers edge tiling (top = maximize, sides = half-screen) to
+    windows that can maximize, so dropping the maximize function blocks all
+    of it at the source. Super+Up and other maximize requests are refused too.
+
+    Qt can't express this for us: with FramelessWindowHint its xcb backend
+    writes _MOTIF_WM_HINTS with decorations only and leaves functions at
+    "all". So we write the property ourselves — decorations stay 0
+    (frameless), functions list everything EXCEPT maximize. Without
+    MWM_FUNC_ALL the list is an allow-list, per the Motif spec.
+
+    Qt rewrites this property whenever window flags change, but the app
+    never changes flags after creation (see _send_wm_state for why), so
+    setting it once before first map is enough. Mutter also re-reads it on
+    change, so calling it on an already-mapped window works as well.
+    """
+    try:
+        from Xlib import display
+    except ImportError:
+        return False
+
+    try:
+        win_id = int(widget.winId())
+        if win_id == 0:
+            return False
+
+        d = display.Display()
+        try:
+            xwin = d.create_resource_object("window", win_id)
+            atom = d.intern_atom("_MOTIF_WM_HINTS")
+            # [flags, functions, decorations, input_mode, status]
+            xwin.change_property(atom, atom, 32, [
+                _MWM_HINTS_FUNCTIONS | _MWM_HINTS_DECORATIONS,
+                _MWM_FUNC_RESIZE | _MWM_FUNC_MOVE
+                | _MWM_FUNC_MINIMIZE | _MWM_FUNC_CLOSE,
+                0, 0, 0,
+            ])
+            d.sync()
+            return True
+        finally:
+            d.close()
+    except Exception:
+        return False
+
+
 def mark_position_user_requested(widget) -> bool:
     """Set the USPosition (and USSize) flag on the widget's X11
     WM_NORMAL_HINTS property. Call this AFTER move()/setGeometry but

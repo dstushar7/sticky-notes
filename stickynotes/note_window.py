@@ -1162,6 +1162,9 @@ class StickyNote(QWidget):
         xwm.set_initial_wm_states(
             self, above=self._is_pinned, skip_taskbar=self._hide_from_dock
         )
+        # Notes are never maximizable or edge-tileable — see disable_maximize.
+        # changeEvent is the fallback for WMs that ignore the hint.
+        xwm.disable_maximize(self)
 
         # Install event filter on children after UI is built
         for child in self.findChildren(QWidget):
@@ -1210,6 +1213,27 @@ class StickyNote(QWidget):
             QTimer.singleShot(0, lambda: xwm.set_always_on_top(self, True))
         if self._hide_from_dock:
             QTimer.singleShot(0, lambda: xwm.set_skip_taskbar(self, True))
+
+    def changeEvent(self, event):
+        """Undo any maximize/fullscreen the WM applies despite disable_maximize.
+
+        A maximized note is broken, not just oversized: the WM ignores our
+        size requests, so collapse leaves the title bar centered in a
+        transparent full-screen window that swallows clicks to everything
+        behind it. Covers WMs that ignore Motif hints, and notes whose saved
+        geometry carries the maximized flag from before this fix (restore-
+        Geometry re-applies it pre-show, and this clears it).
+
+        Deferred so the state change finishes before we revert it. Only the
+        maximize/fullscreen bits are cleared — a minimized note stays minimized.
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            bad = Qt.WindowState.WindowMaximized | Qt.WindowState.WindowFullScreen
+            if self.windowState() & bad:
+                QTimer.singleShot(
+                    0, lambda: self.setWindowState(self.windowState() & ~bad)
+                )
 
     def set_hidden_from_dock(self, hidden: bool):
         """Apply the app-global dock preference to this note. Called by
