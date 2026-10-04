@@ -15,6 +15,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextBlockFormat, QTextCursor, QKeySequence,
     QShortcut, QFont, QFontMetrics, QDesktopServices, QPalette,
+    QTextCharFormat, QTextDocument, QTextDocumentFragment,
 )
 
 from . import __version__
@@ -85,6 +86,92 @@ def _is_checklist_block(block) -> bool:
 
 def _cursor_in_checklist(cursor: QTextCursor) -> bool:
     return _is_checklist_block(cursor.block())
+
+
+# ---------------------------------------------------------------------------
+# Paste sanitising
+#
+# Rule: a paste may only carry formatting the user could have typed. The
+# format bar offers bold/italic/underline/strike, bullets and checklists — so
+# that is all that survives. Font family and size, text and background
+# colours, line-height, alignment, headings, links, images and tables are
+# dropped, because once pasted there would be no way to remove them from
+# inside the note (e.g. VS Code's dark editor background and monospace font).
+#
+# The pasted HTML is REBUILT into a fresh document rather than stripped in
+# place: only what is explicitly copied below gets through, so formats we
+# never thought of (table cell backgrounds, frame borders, white-space: pre)
+# can't leak in.
+# ---------------------------------------------------------------------------
+_OBJECT_REPLACEMENT_CHAR = "￼"   # stands in for images / inline objects
+_NBSP = " "
+
+
+def _clean_char_format(src: QTextCharFormat) -> QTextCharFormat:
+    fmt = QTextCharFormat()
+    if src.fontWeight() >= QFont.Weight.DemiBold:
+        fmt.setFontWeight(QFont.Weight.Bold)
+    if src.fontItalic():
+        fmt.setFontItalic(True)
+    # Links are rendered underlined; once the link itself is dropped that
+    # underline would just be a stray decoration.
+    if src.fontUnderline() and not src.isAnchor():
+        fmt.setFontUnderline(True)
+    if src.fontStrikeOut():
+        fmt.setFontStrikeOut(True)
+    return fmt
+
+
+def _sanitized_fragment(html: str) -> QTextDocumentFragment:
+    """Rebuild pasted HTML keeping only text, B/I/U/S, lists and checkboxes."""
+    src = QTextDocument()
+    src.setHtml(html)
+    dst = QTextDocument()
+    cursor = QTextCursor(dst)
+    lists = {}   # source list objectIndex -> rebuilt QTextList
+
+    block = src.begin()
+    first = True
+    while block.isValid():
+        if not first:
+            cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())
+        first = False
+
+        src_list = block.textList()
+        block_fmt = QTextBlockFormat()
+        if src_list is not None:
+            block_fmt.setMarker(block.blockFormat().marker())
+        cursor.setBlockFormat(block_fmt)
+
+        if src_list is not None:
+            dst_list = lists.get(src_list.objectIndex())
+            if dst_list is None:
+                # Numbered and custom lists collapse to the same bullet
+                # styles Tab-nesting uses, keyed off the nesting depth.
+                indent = max(1, src_list.format().indent())
+                list_fmt = QTextListFormat()
+                list_fmt.setIndent(indent)
+                list_fmt.setStyle(_style_for_indent(indent))
+                lists[src_list.objectIndex()] = cursor.createList(list_fmt)
+            else:
+                dst_list.add(cursor.block())
+
+        it = block.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid() and not frag.charFormat().isImageFormat():
+                # Code from editors arrives as white-space: pre, which Qt
+                # turns into non-breaking spaces — keep them and long lines
+                # would refuse to wrap in a narrow note.
+                text = (frag.text()
+                        .replace(_OBJECT_REPLACEMENT_CHAR, "")
+                        .replace(_NBSP, " "))
+                if text:
+                    cursor.insertText(text, _clean_char_format(frag.charFormat()))
+            it += 1
+        block = block.next()
+
+    return QTextDocumentFragment(dst)
 
 # ---------------------------------------------------------------------------
 # Resize zone ids
@@ -157,6 +244,15 @@ class NoteTextEdit(QTextEdit):
             return
 
         super().keyPressEvent(event)
+
+    def insertFromMimeData(self, source):
+        """Paste / drop. Rich content is sanitised (see _sanitized_fragment);
+        plain text and anything without HTML takes Qt's normal path."""
+        if source.hasHtml():
+            self.textCursor().insertFragment(_sanitized_fragment(source.html()))
+            self.ensureCursorVisible()
+            return
+        super().insertFromMimeData(source)
 
     def _marker_block_at(self, pos):
         """Return the checklist block whose checkbox sits at viewport `pos`,
