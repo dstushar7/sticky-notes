@@ -6,10 +6,15 @@ import sys
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction, QGuiApplication
 from PyQt6.QtCore import QSettings, QTimer
-from .note_window import StickyNote, SettingsDialog, AboutDialog, ShortcutsDialog
+from .note_window import (
+    StickyNote, SettingsDialog, AboutDialog, ShortcutsDialog, ReceiveDialog,
+    default_note_size,
+)
+from . import __version__
 from . import autostart
 from . import utils
 from . import config
+from . import whats_new
 
 
 # Set once at import time: are we in the failing case (snap autostart firing
@@ -25,12 +30,18 @@ _AUTOSTART_ON_WAYLAND = (
 class TrayManager:
     """Manages the system tray icon and application life cycle."""
 
+    # How far a received note opens from the note Receive was clicked on —
+    # enough to show both title bars, so it's obvious which one is new.
+    _RECEIVED_NOTE_OFFSET = 36
+
     def __init__(self, app: QApplication):
         self.app = app
         self.open_notes = {}
         self._settings_dialog = None
         self._about_dialog = None
         self._shortcuts_dialog = None
+        self._receive_dialog = None
+        self._receive_anchor_id = None   # note the dialog was opened from
 
         self.app.setQuitOnLastWindowClosed(False)
         # app.quit() does not call closeEvent on individual windows, so any
@@ -40,7 +51,18 @@ class TrayManager:
         self._setup_tray_icon()
         self._load_notes()
 
-        # Decide whether to show a starter note when no notes were restored.
+        # First-ever launch = no saved notes AND no first-launch flag. Both,
+        # because installs older than the flag only ever set it when they had
+        # no notes — a long-time user with notes may never have it.
+        settings = QSettings(config.ORG_NAME, config.APP_NAME)
+        is_first_ever = not self.open_notes and not settings.value(
+            "first_launch_completed", False, type=bool
+        )
+
+        self._show_whats_new(settings, skip=is_first_ever)
+
+        # Decide whether to show a starter note when no notes were restored
+        # (a What's-new note counts — it already gives the user something).
         # Three states map to three behaviors:
         #   - first launch ever (no QSettings flag yet)  → welcoming note
         #   - subsequent manual launch with no notes     → blank starter
@@ -50,10 +72,6 @@ class TrayManager:
         # login on an empty state would flash up an unwanted blank note —
         # the exact "gets in your way" behavior the app is positioned against.
         if not self.open_notes:
-            settings = QSettings(config.ORG_NAME, config.APP_NAME)
-            is_first_ever = not settings.value(
-                "first_launch_completed", False, type=bool
-            )
             is_autostart = "--autostart" in sys.argv
 
             if is_first_ever:
@@ -130,26 +148,46 @@ class TrayManager:
             "<li>Double-click the title bar to collapse to a pill</li>"
             "<li>Ctrl+B, Ctrl+I, Ctrl+U for bold, italic, underline</li>"
             "<li>Click the + button to add another note</li>"
-            "<li>Click ••• to switch themes or delete</li>"
+            "<li>Click ••• to switch themes, share, or delete</li>"
             "</ul>"
             "<p>Click the title to rename. Edit or delete this note whenever.</p>"
         )
-        # Size the welcome note so the tips fit without scrolling — the
-        # default new-note size clips most of the lines. Center it on the
-        # primary screen so it lands somewhere obvious on first launch.
-        w, h = 460, 380
-        screen = QGuiApplication.primaryScreen()
-        if screen is not None:
-            g = screen.availableGeometry()
-            x = g.x() + (g.width() - w) // 2
-            y = g.y() + (g.height() - h) // 2
-        else:
-            x, y = 250, 200
         self._create_new_note(
             title="Welcome to Sticky Notes",
             content=body,
-            geometry_data=(x, y, w, h),
+            geometry_data=self._centered_geometry(*self._ANNOUNCEMENT_SIZE),
         )
+
+    # Welcome and What's-new notes: sized so their text fits without scrolling
+    # (the default new-note size clips most of the lines).
+    _ANNOUNCEMENT_SIZE = (460, 380)
+
+    def _show_whats_new(self, settings: QSettings, skip: bool):
+        """One-time note after upgrading to a feature release (whats_new.py).
+
+        Records the running version either way, so the note never repeats;
+        `skip` is set for first-time users, who get the welcome note instead.
+        """
+        last_seen = settings.value(config.SETTING_LAST_SEEN_VERSION, None)
+        settings.setValue(config.SETTING_LAST_SEEN_VERSION, __version__)
+        if skip:
+            return
+        release = whats_new.pending(last_seen, __version__)
+        if release is None:
+            return
+        self._create_new_note(
+            title=release.title,
+            content=release.body,
+            geometry_data=self._centered_geometry(*self._ANNOUNCEMENT_SIZE),
+        )
+
+    def _centered_geometry(self, w: int, h: int) -> tuple:
+        """(x, y, w, h) centered on the primary screen — somewhere obvious."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return (250, 200, w, h)
+        g = screen.availableGeometry()
+        return (g.x() + (g.width() - w) // 2, g.y() + (g.height() - h) // 2, w, h)
 
     def _save_all_notes(self):
         for note in self.open_notes.values():
@@ -177,6 +215,10 @@ class TrayManager:
         new_note_action = QAction("New Note", parent=self.menu)
         new_note_action.triggered.connect(lambda _checked=False: self._create_new_note())
         self.menu.addAction(new_note_action)
+
+        receive_action = QAction("Receive Note…", parent=self.menu)
+        receive_action.triggered.connect(lambda _checked=False: self._show_receive_dialog())
+        self.menu.addAction(receive_action)
 
         show_all_action = QAction("Show All Notes", parent=self.menu)
         show_all_action.triggered.connect(self._show_all_notes)
@@ -266,6 +308,7 @@ class TrayManager:
         )
         note.noteDeleted.connect(self._handle_note_deletion)
         note.newNoteRequested.connect(self._new_note_from_signal)
+        note.receiveRequested.connect(self._show_receive_dialog)
         note.show()
         self.open_notes[note.note_id] = note
 
@@ -316,6 +359,38 @@ class TrayManager:
         dlg.finished.connect(lambda _r: setattr(self, "_shortcuts_dialog", None))
         self._shortcuts_dialog = dlg
         dlg.show()
+
+    def _show_receive_dialog(self, anchor_note_id=None):
+        """Open Receive. `anchor_note_id` is the note whose ••• panel it came
+        from (None = tray); the received note opens beside that note."""
+        self._receive_anchor_id = anchor_note_id
+        # Same reuse-once pattern as Settings — a second request just refocuses
+        # (and re-anchors to whichever note asked last).
+        if self._receive_dialog is not None and self._receive_dialog.isVisible():
+            self._receive_dialog.raise_()
+            self._receive_dialog.activateWindow()
+            return
+        dlg = ReceiveDialog()
+        dlg.noteReceived.connect(self._add_received_note)
+        dlg.finished.connect(lambda _r: setattr(self, "_receive_dialog", None))
+        self._receive_dialog = dlg
+        dlg.show()
+
+    def _add_received_note(self, shared):
+        """Create the note from a decoded share (sharing.SharedNote)."""
+        w, h = default_note_size()
+        anchor = self.open_notes.get(self._receive_anchor_id)
+        if anchor is not None and anchor.isVisible():
+            offset = self._RECEIVED_NOTE_OFFSET
+            geometry = (anchor.x() + offset, anchor.y() + offset, w, h)
+        else:
+            geometry = self._centered_geometry(w, h)
+        self._create_new_note(
+            content=shared.body_html,
+            geometry_data=geometry,
+            theme=shared.theme,
+            title=shared.title,
+        )
 
     def _show_all_notes(self):
         if not self.open_notes:

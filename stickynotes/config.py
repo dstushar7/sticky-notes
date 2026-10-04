@@ -64,6 +64,13 @@ SHADOW_PANEL          = (16, 4, 80)
 # of its windows is listed, so hiding only some notes would achieve nothing.
 SETTING_HIDE_FROM_DOCK = "hide_from_dock"
 
+# QSettings key for the last app version this user launched. Drives the
+# one-time "What's new" note (see whats_new.py).
+SETTING_LAST_SEEN_VERSION = "last_seen_version"
+
+# Share: how long the Share button reads "✓ Copied" before the panel closes.
+SHARE_COPIED_FEEDBACK_MS = 1500
+
 # Bound shortcuts — single source of truth for every QShortcut the app installs.
 #
 # Consumed by StickyNote._setup_shortcuts (which binds them), FormatBar (which

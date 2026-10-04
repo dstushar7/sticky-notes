@@ -1,7 +1,7 @@
 name: stickynotes-dabobroto
 title: Sticky Notes
 base: core24
-version: '3.5.4'
+version: '3.6.0'
 platforms:
   amd64:
 summary: The lightest, prettiest sticky notes app on Linux. No cloud, no nonsense.
@@ -31,6 +31,8 @@ description: |
   - Real keyboard shortcuts: Ctrl+B/I/U, Ctrl+Shift+S, Ctrl+Shift+L, Tab to indent
   - Notes name themselves from your first line until you decide otherwise
   - Drag them anywhere, resize from any edge, open as many as you like
+  - Share a note as a short bit of text — paste it in any chat and your
+    colleague adds it with one click. Still no account, still no cloud
   - Lives in the system tray with your latest notes a click away
   - Auto-launches at login by default — quietly restores your notes,
     skips the popup if you have nothing saved, and flips off in Settings

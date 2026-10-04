@@ -115,6 +115,7 @@
   -->
 
   <releases>
+    <release version="3.6.0" date="2026-10-04" />
     <release version="3.5.4" date="2026-10-04" />
     <release version="3.5.3" date="2026-10-04" />
     <release version="3.5.2" date="2026-10-01" />

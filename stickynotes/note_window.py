@@ -2,10 +2,11 @@
 
 import uuid
 from datetime import datetime, timezone
+from html import escape as html_escape
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTextEdit, QPushButton,
     QLabel, QLineEdit, QStackedLayout, QSizePolicy, QGraphicsDropShadowEffect,
-    QApplication, QDialog, QCheckBox, QFrame, QSystemTrayIcon,
+    QApplication, QDialog, QCheckBox, QFrame, QSystemTrayIcon, QPlainTextEdit,
 )
 from PyQt6.QtCore import (
     QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray, QUrl,
@@ -14,8 +15,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextBlockFormat, QTextCursor, QKeySequence,
-    QShortcut, QFont, QFontMetrics, QDesktopServices, QPalette,
-    QTextCharFormat, QTextDocument, QTextDocumentFragment,
+    QShortcut, QFont, QFontMetrics, QDesktopServices, QPalette, QTextDocument,
 )
 
 from . import __version__
@@ -23,12 +23,24 @@ from . import config
 from . import utils
 from . import autostart
 from . import xwm
+from . import sharing
 from .widgets import FloatingButton
+from .richtext import sanitized_fragment, style_for_indent
 
 
 def _now_iso() -> str:
     """Timezone-aware UTC ISO-8601 timestamp used for last_edited."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def default_note_size() -> tuple:
+    """(width, height) for a note with no saved geometry. Scales with the
+    screen so notes don't look tiny on 1440p/4K or oversized on small laptops."""
+    screen = QApplication.primaryScreen().availableGeometry()
+    return (
+        max(280, min(480, screen.width() // 8)),
+        max(280, min(480, screen.height() // 6)),
+    )
 
 
 def derive_title_from_text(plain_text: str) -> str:
@@ -43,18 +55,6 @@ def derive_title_from_text(plain_text: str) -> str:
                 if derived:
                     return derived
     return config.DEFAULT_NOTE_TITLE
-
-
-# Bullet styles cycled by sublist depth so nested levels are visually distinct.
-_LIST_STYLES = (
-    QTextListFormat.Style.ListDisc,
-    QTextListFormat.Style.ListCircle,
-    QTextListFormat.Style.ListSquare,
-)
-
-
-def _style_for_indent(indent: int) -> QTextListFormat.Style:
-    return _LIST_STYLES[(max(1, indent) - 1) % len(_LIST_STYLES)]
 
 
 # ---------------------------------------------------------------------------
@@ -87,91 +87,6 @@ def _is_checklist_block(block) -> bool:
 def _cursor_in_checklist(cursor: QTextCursor) -> bool:
     return _is_checklist_block(cursor.block())
 
-
-# ---------------------------------------------------------------------------
-# Paste sanitising
-#
-# Rule: a paste may only carry formatting the user could have typed. The
-# format bar offers bold/italic/underline/strike, bullets and checklists — so
-# that is all that survives. Font family and size, text and background
-# colours, line-height, alignment, headings, links, images and tables are
-# dropped, because once pasted there would be no way to remove them from
-# inside the note (e.g. VS Code's dark editor background and monospace font).
-#
-# The pasted HTML is REBUILT into a fresh document rather than stripped in
-# place: only what is explicitly copied below gets through, so formats we
-# never thought of (table cell backgrounds, frame borders, white-space: pre)
-# can't leak in.
-# ---------------------------------------------------------------------------
-_OBJECT_REPLACEMENT_CHAR = "￼"   # stands in for images / inline objects
-_NBSP = " "
-
-
-def _clean_char_format(src: QTextCharFormat) -> QTextCharFormat:
-    fmt = QTextCharFormat()
-    if src.fontWeight() >= QFont.Weight.DemiBold:
-        fmt.setFontWeight(QFont.Weight.Bold)
-    if src.fontItalic():
-        fmt.setFontItalic(True)
-    # Links are rendered underlined; once the link itself is dropped that
-    # underline would just be a stray decoration.
-    if src.fontUnderline() and not src.isAnchor():
-        fmt.setFontUnderline(True)
-    if src.fontStrikeOut():
-        fmt.setFontStrikeOut(True)
-    return fmt
-
-
-def _sanitized_fragment(html: str) -> QTextDocumentFragment:
-    """Rebuild pasted HTML keeping only text, B/I/U/S, lists and checkboxes."""
-    src = QTextDocument()
-    src.setHtml(html)
-    dst = QTextDocument()
-    cursor = QTextCursor(dst)
-    lists = {}   # source list objectIndex -> rebuilt QTextList
-
-    block = src.begin()
-    first = True
-    while block.isValid():
-        if not first:
-            cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())
-        first = False
-
-        src_list = block.textList()
-        block_fmt = QTextBlockFormat()
-        if src_list is not None:
-            block_fmt.setMarker(block.blockFormat().marker())
-        cursor.setBlockFormat(block_fmt)
-
-        if src_list is not None:
-            dst_list = lists.get(src_list.objectIndex())
-            if dst_list is None:
-                # Numbered and custom lists collapse to the same bullet
-                # styles Tab-nesting uses, keyed off the nesting depth.
-                indent = max(1, src_list.format().indent())
-                list_fmt = QTextListFormat()
-                list_fmt.setIndent(indent)
-                list_fmt.setStyle(_style_for_indent(indent))
-                lists[src_list.objectIndex()] = cursor.createList(list_fmt)
-            else:
-                dst_list.add(cursor.block())
-
-        it = block.begin()
-        while not it.atEnd():
-            frag = it.fragment()
-            if frag.isValid() and not frag.charFormat().isImageFormat():
-                # Code from editors arrives as white-space: pre, which Qt
-                # turns into non-breaking spaces — keep them and long lines
-                # would refuse to wrap in a narrow note.
-                text = (frag.text()
-                        .replace(_OBJECT_REPLACEMENT_CHAR, "")
-                        .replace(_NBSP, " "))
-                if text:
-                    cursor.insertText(text, _clean_char_format(frag.charFormat()))
-            it += 1
-        block = block.next()
-
-    return QTextDocumentFragment(dst)
 
 # ---------------------------------------------------------------------------
 # Resize zone ids
@@ -246,10 +161,10 @@ class NoteTextEdit(QTextEdit):
         super().keyPressEvent(event)
 
     def insertFromMimeData(self, source):
-        """Paste / drop. Rich content is sanitised (see _sanitized_fragment);
+        """Paste / drop. Rich content is sanitised (see richtext);
         plain text and anything without HTML takes Qt's normal path."""
         if source.hasHtml():
-            self.textCursor().insertFragment(_sanitized_fragment(source.html()))
+            self.textCursor().insertFragment(sanitized_fragment(source.html()))
             self.ensureCursorVisible()
             return
         super().insertFromMimeData(source)
@@ -358,7 +273,7 @@ class NoteTextEdit(QTextEdit):
 
         new_fmt = QTextListFormat()
         new_fmt.setIndent(new_indent)
-        new_fmt.setStyle(_style_for_indent(new_indent))
+        new_fmt.setStyle(style_for_indent(new_indent))
         cursor.createList(new_fmt)
 
 
@@ -465,6 +380,8 @@ class _DeleteButton(QPushButton):
 class OptionsPanel(QWidget):
     themeSelected = pyqtSignal(str)
     deleteRequested = pyqtSignal()
+    shareRequested = pyqtSignal()
+    receiveRequested = pyqtSignal()
     # Emitted on every dismissal (outside click, explicit close, theme pick).
     # Carries self so the owner can verify identity before clearing its ref.
     dismissed = pyqtSignal(object)
@@ -538,15 +455,29 @@ class OptionsPanel(QWidget):
             btn.clicked.connect(lambda _checked, n=name: self.themeSelected.emit(n))
             swatch_row.addWidget(btn)
         layout.addLayout(swatch_row)
+        layout.addWidget(self._separator())
 
-        # Separator — reads as the boundary between picker and destructive
-        # action. Opaque hex equivalent of rgba(0, 0, 0, 0.10) composited on
-        # the panel's #ffffff (see _DeleteButton._apply_idle_style for why
-        # opaque colors are required here on Wayland-via-XWayland).
-        separator = QFrame(self)
-        separator.setFixedHeight(1)
-        separator.setStyleSheet("background-color: #e6e6e6;")
-        layout.addWidget(separator)
+        # Row 2 — Share / Receive. Receive doesn't act on this note (it makes
+        # a new one) but lives here too, so it's reachable without the tray.
+        share_row = QHBoxLayout()
+        share_row.setSpacing(6)
+        self._share_btn = self._action_button(
+            "↗  Share",
+            "Copy this note as text you can send to anyone.\n"
+            "Anyone with the text can read the note.",
+        )
+        self._share_btn.clicked.connect(self.shareRequested.emit)
+        receive_btn = self._action_button(
+            "↙  Receive", "Add a note someone shared with you"
+        )
+        receive_btn.clicked.connect(self.receiveRequested.emit)
+        share_row.addWidget(self._share_btn)
+        share_row.addWidget(receive_btn)
+        layout.addLayout(share_row)
+
+        # Delete sits alone below its own separator so the destructive action
+        # stays visually apart from everything else.
+        layout.addWidget(self._separator())
 
         # Destructive action — two-click confirm pattern lives inside the button
         delete_btn = _DeleteButton(self)
@@ -554,6 +485,57 @@ class OptionsPanel(QWidget):
         layout.addWidget(delete_btn)
 
         self.setFixedWidth(220)
+
+    # Neutral and "done" styles for the Share / Receive buttons. Opaque colours
+    # for the same reason as _DeleteButton._apply_idle_style.
+    _ACTION_CSS = """
+        QPushButton {
+            background-color: #f3f4f6;
+            color: #2b2b2b;
+            border: 1px solid #e3e5e8;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 10pt;
+            font-weight: 500;
+        }
+        QPushButton:hover { background-color: #e9ebee; border-color: #d6d9dd; }
+        QPushButton:pressed { background-color: #dfe2e6; }
+    """
+    _ACTION_DONE_CSS = """
+        QPushButton {
+            background-color: #e6f4ea;
+            color: #1e7b3c;
+            border: 1px solid #bfe3cb;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 10pt;
+            font-weight: 500;
+        }
+    """
+
+    def _action_button(self, label: str, tooltip: str) -> QPushButton:
+        btn = QPushButton(label, self)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.setToolTip(tooltip)
+        btn.setStyleSheet(self._ACTION_CSS)
+        return btn
+
+    def _separator(self) -> QFrame:
+        # Opaque hex equivalent of rgba(0, 0, 0, 0.10) composited on the
+        # panel's #ffffff (see _DeleteButton._apply_idle_style for why opaque
+        # colors are required here on Wayland-via-XWayland).
+        separator = QFrame(self)
+        separator.setFixedHeight(1)
+        separator.setStyleSheet("background-color: #e6e6e6;")
+        return separator
+
+    def show_share_copied(self):
+        """Confirm the copy in place, then get out of the way."""
+        self._share_btn.setText("✓  Copied")
+        self._share_btn.setStyleSheet(self._ACTION_DONE_CSS)
+        self._share_btn.setEnabled(False)
+        QTimer.singleShot(config.SHARE_COPIED_FEEDBACK_MS, self.close)
 
     def _apply_panel_style(self):
         # Selector-scoped so we don't accidentally restyle every QWidget child
@@ -1136,6 +1118,7 @@ class StickyNote(QWidget):
     noteDeleted = pyqtSignal(str)
     newNoteRequested = pyqtSignal(str)        # emits theme_name
     titleChanged = pyqtSignal(str, str)        # emits (note_id, new_title)
+    receiveRequested = pyqtSignal(str)         # emits note_id (placement anchor)
 
     def __init__(
         self,
@@ -1237,12 +1220,7 @@ class StickyNote(QWidget):
             self.restoreGeometry(geometry_data)
             self._initial_position = (self.x(), self.y())
         else:
-            # Default size scales with the user's screen so notes don't look
-            # tiny on 1440p/4K or oversized on small laptops.
-            screen = QApplication.primaryScreen().availableGeometry()
-            default_w = max(280, min(480, screen.width() // 8))
-            default_h = max(280, min(480, screen.height() // 6))
-            self.resize(default_w, default_h)
+            self.resize(*default_note_size())
 
         # Tag the window's WM_NORMAL_HINTS with USPosition so Mutter (and any
         # other X11 WM) honors our requested position on the *initial* window
@@ -1567,6 +1545,8 @@ class StickyNote(QWidget):
         panel = OptionsPanel(self._theme_name, parent=self)
         panel.themeSelected.connect(self._change_theme)
         panel.deleteRequested.connect(self._handle_delete)
+        panel.shareRequested.connect(self._share)
+        panel.receiveRequested.connect(self._request_receive)
         panel.dismissed.connect(self._on_panel_dismissed)
 
         # Position: below and right-aligned to the "..." button
@@ -1598,6 +1578,27 @@ class StickyNote(QWidget):
         self._apply_theme(utils.get_theme(theme_name))
         self._close_options_panel()
         self._save()
+
+    # ------------------------------------------------------------------
+    # Share / Receive (format and safety rules live in sharing.py)
+    # ------------------------------------------------------------------
+
+    def _share(self):
+        """Put this note on the clipboard as shareable text."""
+        QApplication.clipboard().setText(sharing.encode_note(
+            title=self._title,
+            title_is_auto=self._title_is_default,
+            theme=self._theme_name,
+            body_html=self.text_edit.toHtml(),
+        ))
+        if self._options_panel is not None:
+            self._options_panel.show_share_copied()
+
+    def _request_receive(self):
+        """Receive makes a new note, which only TrayManager can do — hand it
+        off, naming this note so the new one opens beside it."""
+        self._close_options_panel()
+        self.receiveRequested.emit(self.note_id)
 
     # ------------------------------------------------------------------
     # Delete
@@ -2378,6 +2379,125 @@ class ShortcutsDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
+
+
+# ---------------------------------------------------------------------------
+# ReceiveDialog — paste a shared note's text, preview it, add it as a note.
+#
+# Opened from the tray or any note's ••• panel and owned by TrayManager, which
+# creates the note on noteReceived. Validation reruns on every edit, so the
+# preview / error line and the Add button always describe what's in the box.
+# ---------------------------------------------------------------------------
+class ReceiveDialog(QDialog):
+    noteReceived = pyqtSignal(object)   # sharing.SharedNote
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Receive Note")
+        self.setModal(False)
+        self.setMinimumWidth(430)
+        self._shared = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
+
+        title = QLabel("Receive a note")
+        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
+        layout.addWidget(title)
+        layout.addWidget(QLabel("Paste the text someone shared with you:"))
+
+        self.input = QPlainTextEdit()
+        self.input.setPlaceholderText("Sticky Note: …\nSN1:…")
+        self.input.setFixedHeight(90)
+        mono = QFont("monospace")
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        mono.setPointSize(9)
+        self.input.setFont(mono)
+        layout.addWidget(self.input)
+
+        # Preview (colour dot + title) or a hint / error, in one row.
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
+        self._dot = QLabel()
+        self._dot.setFixedSize(14, 14)
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        self._status.setTextFormat(Qt.TextFormat.RichText)
+        status_row.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self._status, 1)
+        layout.addLayout(status_row)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        self._add_btn = QPushButton("Add note")
+        self._add_btn.setDefault(True)
+        self._add_btn.clicked.connect(self._add_note)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(self._add_btn)
+        layout.addLayout(btn_row)
+
+        self.input.textChanged.connect(self._validate)
+        self._prefill_from_clipboard()
+        self._validate()
+        self.adjustSize()
+
+    def _prefill_from_clipboard(self):
+        """Save a paste when the user has just copied a share. Only text that
+        actually decodes is taken — never whatever else is on the clipboard."""
+        text = QApplication.clipboard().text()
+        try:
+            sharing.decode_note(text)
+        except sharing.ShareError:
+            return
+        self.input.setPlainText(text)
+
+    def _validate(self):
+        text = self.input.toPlainText()
+        self._shared = None
+        if not text.strip():
+            self._show_message("Paste a shared note above to see a preview.", "#888")
+        else:
+            try:
+                self._shared = sharing.decode_note(text)
+            except sharing.ShareError as error:
+                self._show_message(f"⚠  {error}", "#cc0000")
+            else:
+                self._show_preview(self._shared)
+        self._add_btn.setEnabled(self._shared is not None)
+
+    def _show_message(self, message: str, color: str):
+        self._dot.hide()
+        self._status.setText(
+            f'<span style="color:{color}; font-size:9pt;">'
+            f"{html_escape(message)}</span>"
+        )
+
+    def _show_preview(self, shared):
+        theme = utils.get_theme(shared.theme)
+        self._dot.setStyleSheet(
+            f"background-color: {theme['bg']}; border: 1px solid {theme['title']};"
+            " border-radius: 7px;"
+        )
+        self._dot.show()
+        doc = QTextDocument()
+        doc.setHtml(shared.body_html)
+        plain = doc.toPlainText()
+        lines = sum(1 for line in plain.splitlines() if line.strip())
+        title = shared.title or derive_title_from_text(plain)
+        self._status.setText(
+            f"<b>{html_escape(title)}</b>"
+            f'<span style="color:#888;"> · {shared.theme.capitalize()}'
+            f" · {lines} line{'' if lines == 1 else 's'}</span>"
+        )
+
+    def _add_note(self):
+        if self._shared is None:
+            return
+        self.noteReceived.emit(self._shared)
+        self.accept()
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ Notes save locally and are restored exactly where you left them between sessions
 - ✍️ **Rich text formatting** — Bold (`Ctrl+B`), Italic (`Ctrl+I`), Underline (`Ctrl+U`), Strikethrough (`Ctrl+Shift+S`)
 - 📋 **Bullet lists with nested sublists** — Toggle with `Ctrl+Shift+L`; `Tab` indents to a sublist (style cycles ●→○→■), `Shift+Tab` outdents; `Enter` continues, `Shift+Enter` breaks out
 - 🪄 **Collapse / expand** — double-click anywhere on the title bar outside the title to collapse a note to just its header
+- 📤 **Share & Receive** — `•••` → Share copies a note as a short piece of text; paste it in any chat, and the other person adds it with `•••` → Receive (or the tray menu). Same title, text, formatting and color — no account, no cloud
 - 🖱️ **Resizable from all 8 edges and corners** — no OS chrome needed
 - 🧩 System tray integration with a **Show Note ▶** submenu listing open notes, sorted by most recently edited
 - 👁️ "Show All Notes" support to bring all notes to the front
