@@ -36,6 +36,12 @@ TRAY_MENU_NOTE_LIMIT = 10   # max number of notes listed in the tray menu
 # Persistence timing
 SAVE_DEBOUNCE_MS = 500       # delay after the last move/resize before flushing to QSettings
 
+# How long after an edge-resize goes quiet before the note's size is locked
+# again (see StickyNote._lock_size). Long enough that a pause mid-drag doesn't
+# freeze the resize under the pointer, short enough to close the window in
+# which a tiling shortcut could still act on the note.
+SIZE_RELOCK_DELAY_MS = 1500
+
 # Delete confirmation
 DELETE_CONFIRM_WINDOW_MS = 4000   # how long the "armed" state stays armed before reverting
 

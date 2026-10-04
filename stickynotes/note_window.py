@@ -1191,6 +1191,13 @@ class StickyNote(QWidget):
         self._save_debounce.setInterval(config.SAVE_DEBOUNCE_MS)
         self._save_debounce.timeout.connect(self._save)
 
+        # Size lock — see _lock_size. True only while an edge-resize is live.
+        self._size_unlocked = False
+        self._relock_timer = QTimer(self)
+        self._relock_timer.setSingleShot(True)
+        self._relock_timer.setInterval(config.SIZE_RELOCK_DELAY_MS)
+        self._relock_timer.timeout.connect(self._lock_size)
+
         self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
         self._setup_ui()
         self._setup_shortcuts()
@@ -1249,6 +1256,10 @@ class StickyNote(QWidget):
         # is set when the WM first maps the window.
         if geometry_data is not None:
             xwm.mark_position_user_requested(self)
+
+        # Lock before first map so the WM never sees a resizable note — with
+        # min == max from the start, no tiling path can catch it in between.
+        self._lock_size()
 
         # Assert WM states BEFORE the window is first mapped. Mutter honours
         # whatever _NET_WM_STATE is present at map time, so doing it here means
@@ -1641,14 +1652,15 @@ class StickyNote(QWidget):
         self.title_bar.set_collapsed_style(True)
         self._apply_collapsed_shadow()
 
-        # Allow window to shrink below its normal minimum
-        self.setMinimumHeight(0)
-
         # Window must accommodate the title bar plus the top/bottom
         # shadow gutters; otherwise the gutters consume all the height
         # and the title bar is clipped.
         collapsed_h = config.TITLE_BAR_HEIGHT + 2 * config.SHADOW_GUTTER
 
+        # Animating min and max together keeps the size locked on every frame
+        # (min == max), so the WM never sees a resizable note mid-animation.
+        # Minimum is animated first, so on the way down it never exceeds max.
+        self._lock_size()
         group = QParallelAnimationGroup(self)
         for prop in (b"minimumHeight", b"maximumHeight"):
             anim = QPropertyAnimation(self, prop)
@@ -1661,6 +1673,7 @@ class StickyNote(QWidget):
         def _hide_body():
             self.text_edit.hide()
             self.format_bar.hide()
+            self._lock_size()
         group.finished.connect(_hide_body)
         group.start()
         self._anim_group = group    # prevent GC
@@ -1678,6 +1691,9 @@ class StickyNote(QWidget):
         self.text_edit.show()
         self.format_bar.show()
 
+        # Same lock-on-every-frame animation as _collapse. On the way up min
+        # briefly leads max within a frame; Qt sizes to min, as it always has.
+        self._lock_size()
         group = QParallelAnimationGroup(self)
         for prop in (b"minimumHeight", b"maximumHeight"):
             anim = QPropertyAnimation(self, prop)
@@ -1687,11 +1703,7 @@ class StickyNote(QWidget):
             anim.setEndValue(target_h)
             group.addAnimation(anim)
 
-        def _restore_constraints():
-            self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
-            self.setMaximumSize(16_777_215, 16_777_215)
-
-        group.finished.connect(_restore_constraints)
+        group.finished.connect(self._lock_size)
         group.start()
         self._anim_group = group
 
@@ -1704,9 +1716,7 @@ class StickyNote(QWidget):
         self._apply_collapsed_shadow()
         self.text_edit.hide()
         self.format_bar.hide()
-        self.setMinimumHeight(0)
-        self.setMaximumHeight(collapsed_h)
-        self.resize(self.width(), collapsed_h)
+        self._lock_size(height=collapsed_h)
 
     # ------------------------------------------------------------------
     # Bullet list toggle
@@ -1948,6 +1958,52 @@ class StickyNote(QWidget):
         if right:  return _E
         return _NONE
 
+    # ---- Size lock: notes are fixed-size windows except during an edge drag
+
+    def _lock_size(self, width=None, height=None):
+        """Pin minimum == maximum == the note's size (optionally a new one).
+
+        Why: a window the WM considers resizable can be tiled or maximized,
+        and a tiled note breaks — the WM owns its height, so collapse leaves
+        the title bar stranded mid-screen. disable_maximize only stops GNOME's
+        own maximize/edge-tiling; Ubuntu's Tiling Assistant ignores that and
+        tiles anything that "allows resize". Mutter derives that from
+        WM_NORMAL_HINTS alone (it ignores the Motif resize flag), and a window
+        whose min equals its max is fixed-size: no resize, maximize, fullscreen
+        or tiling from any source, with nothing for the note to snap back from.
+
+        The app still sizes itself freely — collapse/expand and restored
+        geometry go through here with the new size. Only the user's edge drag
+        needs the lock lifted; see _unlock_size_for_resize.
+        """
+        self._relock_timer.stop()
+        self._size_unlocked = False
+        w = self.width() if width is None else width
+        h = self.height() if height is None else height
+        self.setFixedSize(w, h)
+        # Qt buffers the new WM_NORMAL_HINTS until its next flush, which was
+        # measured at up to ~1 s on an idle app; until it lands the WM still
+        # treats the note as resizable. sync() pushes it out now (~2 ms).
+        QApplication.sync()
+
+    def _unlock_size_for_resize(self):
+        """Lift the lock so the WM accepts the edge drag about to start.
+
+        Re-locked by _relock_timer once resize events go quiet (resizeEvent
+        keeps restarting it), or straight away when a title-bar drag starts —
+        the WM's resize grab never tells us it ended, so this is the closest
+        signal there is. A collapsed note keeps its height fixed; only its
+        width was ever adjustable.
+        """
+        if self._is_collapsed:
+            self.setMinimumSize(config.MIN_NOTE_WIDTH, self.height())
+            self.setMaximumSize(16_777_215, self.height())
+        else:
+            self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
+            self.setMaximumSize(16_777_215, 16_777_215)
+        self._size_unlocked = True
+        self._relock_timer.start()
+
     # ---- Mouse dispatch helpers (used by both eventFilter and self overrides)
 
     def _try_start_resize(self, gpos: QPoint) -> bool:
@@ -1955,6 +2011,7 @@ class StickyNote(QWidget):
         zone = self._get_resize_zone(self.mapFromGlobal(gpos))
         if zone == _NONE:
             return False
+        self._unlock_size_for_resize()
         # Native WM resize is the most reliable on Linux — it handles
         # the geometry math correctly for all four edges (the manual
         # fallback gets the top-edge case wrong on some compositors).
@@ -1973,6 +2030,10 @@ class StickyNote(QWidget):
         """If pressed on a DragHandle, start a drag and return True."""
         if not isinstance(obj, DragHandle):
             return False
+        # A drag is how the note reaches a screen edge, so it must never start
+        # unlocked — even if a resize finished a moment ago.
+        if self._size_unlocked:
+            self._lock_size()
         wh = self.windowHandle()
         if wh is not None and wh.startSystemMove():
             return True
@@ -2002,6 +2063,8 @@ class StickyNote(QWidget):
             self._is_resizing = False
             self._resize_zone = _NONE
             self.unsetCursor()
+            # The manual fallback does see the release, so lock right away.
+            self._lock_size()
             return True
         if self._is_dragging:
             self._is_dragging = False
@@ -2063,6 +2126,9 @@ class StickyNote(QWidget):
             # 30px buttons at ~280px window; clamped by FormatBar to [24, 44]
             btn = int(self.width() / 9.5)
             self.format_bar.apply_size(btn)
+        # Still edge-resizing: push the re-lock back until the drag goes quiet.
+        if getattr(self, "_size_unlocked", False):
+            self._relock_timer.start()
         # Save size after the user finishes resizing
         if hasattr(self, "_save_debounce") and not self._is_being_deleted:
             self._save_debounce.start()
