@@ -28,14 +28,16 @@ RELEASES = {
     "3.6.0": Release(
         title="What's new in 3.6",
         body=(
-            "<p><b>Share notes with anyone</b></p>"
+            "<p><b>You can share notes now!</b></p>"
+            "<p>I needed to send a task list to a colleague, so I built this feature.</p>"
             "<ul>"
-            "<li>Click <b>•••</b> → <b>Share</b> to copy a note as text</li>"
-            "<li>Send it on Slack, Teams, WhatsApp or email</li>"
-            "<li>They click <b>•••</b> → <b>Receive</b> (or the tray menu) "
-            "and paste it — same title, text and color</li>"
+            "<li><b>•••</b> → <b>↗ Share</b> copies the note</li>"
+            "<li>Paste it anywhere: Slack, Teams, WhatsApp, email</li>"
+            "<li>They hit <b>•••</b> → <b>↙ Receive</b> and it pops up, "
+            "checkboxes and all</li>"
             "</ul>"
-            "<p>Try it on this note. Delete it whenever you like.</p>"
+            "<p>No account, no cloud. They just need this app too.</p>"
+            "<p>Happy sharing! You can delete this note.</p>"
         ),
     ),
 }
