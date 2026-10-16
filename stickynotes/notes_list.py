@@ -434,7 +434,7 @@ class NotesListWindow(QWidget):
                 border: none;
             }
             QScrollBar:vertical {
-                background: #1e1e1e;
+                background: transparent;
                 width: 6px;
                 margin: 0;
             }
@@ -455,7 +455,7 @@ class NotesListWindow(QWidget):
         self.cards_container = QWidget()
         self.cards_container.setStyleSheet("background-color: transparent;")
         self.cards_layout = QVBoxLayout(self.cards_container)
-        self.cards_layout.setContentsMargins(0, 6, 0, 6)
+        self.cards_layout.setContentsMargins(0, 6, 10, 6)
         self.cards_layout.setSpacing(10)
         self.cards_layout.addStretch(1)
 

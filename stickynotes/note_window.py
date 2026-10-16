@@ -443,10 +443,8 @@ class ColorPaletteBar(QWidget):
 
         p.restore()
 
-        # Seamless 1px border matching panel top & sides, plus bottom divider
-        p.setPen(QPen(QColor("#3d3d3d"), 1))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(clip_path)
+        # Seamless bottom divider separating palette from actions
+        p.setPen(QPen(QColor("#383838"), 1))
         p.drawLine(QPointF(0, h - 0.5), QPointF(w, h - 0.5))
 
     def _index_at(self, x: float) -> int:
@@ -518,10 +516,9 @@ class OptionsPanel(QWidget):
         """Paint an opaque dark rounded rectangle to prevent note text bleed-through."""
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(QColor("#3d3d3d"), 1))
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor("#2b2b2b"))
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        p.drawRoundedRect(rect, config.CORNER_RADIUS_PX, config.CORNER_RADIUS_PX)
+        p.drawRoundedRect(QRectF(self.rect()), config.CORNER_RADIUS_PX, config.CORNER_RADIUS_PX)
 
     def hideEvent(self, event):
         # Popup auto-dismisses on outside click via hide(), not close(), so
