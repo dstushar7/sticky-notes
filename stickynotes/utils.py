@@ -346,10 +346,10 @@ def create_share_icon(color: str, size: int = 16) -> QIcon:
 
 
 def create_receive_icon(color: str, size: int = 16) -> QIcon:
-    """Crisp vector Inbox Tray with Plus (+) for Receive/Import."""
+    """Crisp vector Receive/Import icon: rounded open container with downward arrow."""
     pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
-    stroke = max(1.3, size * 0.085)
+    stroke = max(1.4, size * 0.10)
     pen = QPen(qcolor)
     pen.setWidthF(stroke)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -357,25 +357,41 @@ def create_receive_icon(color: str, size: int = 16) -> QIcon:
     p.setPen(pen)
     p.setBrush(Qt.BrushStyle.NoBrush)
 
-    # Tray at bottom
-    x1 = size * 0.16
-    x2 = size * 0.84
-    y_top = size * 0.56
-    y_bot = size * 0.84
-
-    tray = QPainterPath()
-    tray.moveTo(x1, y_top)
-    tray.lineTo(x1, y_bot)
-    tray.lineTo(x2, y_bot)
-    tray.lineTo(x2, y_top)
-    p.drawPath(tray)
-
-    # Plus (+) symbol above tray
     cx = size / 2.0
-    cy = size * 0.34
-    plus_len = size * 0.17
-    p.drawLine(QPointF(cx - plus_len, cy), QPointF(cx + plus_len, cy))
-    p.drawLine(QPointF(cx, cy - plus_len), QPointF(cx, cy + plus_len))
+    r = size * 0.12
+    left = size * 0.16
+    right = size * 0.84
+    top = size * 0.38
+    bot = size * 0.88
+    open_gap = size * 0.16
+
+    # Open rounded container
+    box = QPainterPath()
+    box.moveTo(cx + open_gap, top)
+    box.lineTo(right - r, top)
+    box.arcTo(right - 2 * r, top, 2 * r, 2 * r, 90, -90)
+    box.lineTo(right, bot - r)
+    box.arcTo(right - 2 * r, bot - 2 * r, 2 * r, 2 * r, 0, -90)
+    box.lineTo(left + r, bot)
+    box.arcTo(left, bot - 2 * r, 2 * r, 2 * r, 270, -90)
+    box.lineTo(left, top + r)
+    box.arcTo(left, top, 2 * r, 2 * r, 180, -90)
+    box.lineTo(cx - open_gap, top)
+    p.drawPath(box)
+
+    # Downward arrow stem
+    arrow_top = size * 0.08
+    arrow_tip = size * 0.65
+    p.drawLine(QPointF(cx, arrow_top), QPointF(cx, arrow_tip))
+
+    # Arrow head wings
+    wing_w = size * 0.22
+    wing_h = size * 0.18
+    head = QPainterPath()
+    head.moveTo(cx - wing_w, arrow_tip - wing_h)
+    head.lineTo(cx, arrow_tip)
+    head.lineTo(cx + wing_w, arrow_tip - wing_h)
+    p.drawPath(head)
 
     p.end()
     return QIcon(pm)
