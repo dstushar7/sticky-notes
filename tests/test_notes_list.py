@@ -245,3 +245,47 @@ def test_notes_list_window_syncs_is_open_state(qapp, tmp_path):
         assert card_map_after["open-note-1"].is_open is False
         win.close()
 
+
+def test_notes_list_window_adaptive_dimensions(qapp, tmp_path):
+    """NotesListWindow width is 1/4 viewport; height adapts to note count or takes full viewport when long."""
+    db_file = tmp_path / "notes_geo_test.db"
+    db = storage.NoteDatabase(db_file)
+    with patch("stickynotes.storage.get_db", return_value=db):
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen else None
+        avail_w = avail.width() if avail else 1440
+        avail_h = avail.height() if avail else 810
+        expected_w = max(NotesListWindow.MIN_WIDTH, int(avail_w * 0.25))
+
+        mock_tm = MagicMock()
+        mock_tm.open_notes = {}
+        win = NotesListWindow(tray_manager=mock_tm)
+
+        # 1. Empty / Few notes (1 note)
+        db.save_note("n1", content="<p>Short note</p>", title="Special Unique Alpha")
+        win.refresh_notes()
+
+        assert win.width() == expected_w
+        # Height is compact, only as much as note entries count
+        assert win.height() < avail_h
+        short_h = win.height()
+
+        # 2. Add 20 notes to make note list very long
+        for i in range(2, 25):
+            db.save_note(f"n{i}", content=f"<p>Long content line 1<br>line 2<br>line 3 for note {i}</p>", title=f"Note {i}")
+        win.refresh_notes()
+
+        # Window width remains 1/4 viewport width
+        assert win.width() == expected_w
+        # Window takes all available height of the viewport when note list is very long
+        assert win.height() == avail_h
+        assert win.height() > short_h
+
+        # 3. Filter notes with search to match only 1 note
+        win.search_input.setText("Special Unique Alpha")
+        # Height shrinks back to fit only the single matching note entry
+        assert win.height() < avail_h
+
+        win.close()
+
+

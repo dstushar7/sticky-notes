@@ -293,10 +293,10 @@ class NoteCardWidget(QFrame):
 class NotesListWindow(QWidget):
     """Dedicated Notes List hub window inspired by Microsoft Sticky Notes."""
 
-    DEFAULT_WIDTH = 350
+    DEFAULT_WIDTH = 360
     DEFAULT_HEIGHT = 620
-    MIN_WIDTH = 280
-    MIN_HEIGHT = 380
+    MIN_WIDTH = 260
+    MIN_HEIGHT = 200
 
     def __init__(self, tray_manager=None, parent=None):
         super().__init__(
@@ -319,6 +319,7 @@ class NotesListWindow(QWidget):
         # Outermost layout with gutter for subtle drop shadow
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(10, 10, 10, 10)
+        self.outer_layout = outer_layout
 
         # Main dark window container
         self.container = QFrame(self)
@@ -341,11 +342,13 @@ class NotesListWindow(QWidget):
         container_layout = QVBoxLayout(self.container)
         container_layout.setContentsMargins(16, 12, 16, 14)
         container_layout.setSpacing(10)
+        self.container_layout = container_layout
 
         # 1. Top action bar (+ on left, ⚙ and ✕ on right)
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(0, 0, 0, 0)
         top_bar.setSpacing(6)
+        self.top_bar_layout = top_bar
 
         # New note (+) button
         self.add_btn = FloatingButton("", tone=FloatingButton.Tone.TITLE_BAR, parent=self)
@@ -382,6 +385,7 @@ class NotesListWindow(QWidget):
         # 2. Bold header "Sticky Notes"
         header_label = QLabel("Sticky Notes")
         header_label.setStyleSheet("color: #ffffff; font-size: 19pt; font-weight: bold;")
+        self.header_label = header_label
         container_layout.addWidget(header_label)
 
         # 3. Search Bar with magnifying glass
@@ -466,6 +470,7 @@ class NotesListWindow(QWidget):
         self.size_grip.setStyleSheet("background: transparent; width: 14px; height: 14px;")
         bottom_bar.addWidget(self.size_grip)
         container_layout.addLayout(bottom_bar)
+        self.bottom_bar_layout = bottom_bar
 
         outer_layout.addWidget(self.container)
 
@@ -489,21 +494,77 @@ class NotesListWindow(QWidget):
         else:
             self.close()
 
+    def _adjust_window_geometry(self, preserve_position: bool = True):
+        """Adjust window width to 1/4 viewport width, and height to match note entries count
+        or full viewport height if note list is long."""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            avail_x = avail.x()
+            avail_y = avail.y()
+            avail_w = avail.width()
+            avail_h = avail.height()
+        else:
+            avail_x, avail_y, avail_w, avail_h = 0, 0, 1440, 810
+
+        # Narrow down width to 1/4 of viewport width
+        target_w = max(self.MIN_WIDTH, int(avail_w * 0.25))
+
+        # Chrome height (margins, header, search bar, top action bar, bottom grip)
+        chrome_h = (
+            self.outer_layout.contentsMargins().top()
+            + self.outer_layout.contentsMargins().bottom()
+            + self.container_layout.contentsMargins().top()
+            + self.container_layout.contentsMargins().bottom()
+            + self.top_bar_layout.sizeHint().height()
+            + self.header_label.sizeHint().height()
+            + self.search_input.sizeHint().height()
+            + self.bottom_bar_layout.sizeHint().height()
+            + self.container_layout.spacing() * 4
+        )
+
+        visible_cards = [c for c in self._cards if not c.isHidden()]
+        if not visible_cards:
+            content_h = max(70, self.empty_label.sizeHint().height())
+        else:
+            card_spacing = self.cards_layout.spacing()
+            cards_total = sum(c.sizeHint().height() for c in visible_cards)
+            cards_total += card_spacing * max(0, len(visible_cards) - 1)
+            cards_margins = self.cards_layout.contentsMargins().top() + self.cards_layout.contentsMargins().bottom()
+            content_h = cards_total + cards_margins
+
+        total_h = chrome_h + content_h
+        min_h = self.MIN_HEIGHT
+        max_h = avail_h  # all available height of the viewport
+
+        # Take all available height when note list is very long;
+        # otherwise take only as much height as its note entries count.
+        target_h = min(max_h, max(min_h, total_h))
+
+        has_pos = (self.x() != 0 or self.y() != 0)
+        if preserve_position and (self.isVisible() or has_pos):
+            curr_pos = self.pos()
+            x = max(avail_x, min(curr_pos.x(), avail_x + avail_w - target_w))
+            if target_h >= max_h:
+                y = avail_y
+            else:
+                y = max(avail_y, min(curr_pos.y(), avail_y + avail_h - target_h))
+            self.setGeometry(x, y, target_w, target_h)
+        else:
+            x = avail_x + (avail_w - target_w) // 2
+            y = avail_y if target_h >= max_h else avail_y + (avail_h - target_h) // 2
+            self.setGeometry(x, y, target_w, target_h)
+
     def _restore_geometry(self):
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         geo = settings.value("notes_list_window_geometry", None)
         if isinstance(geo, QByteArray) and not geo.isEmpty():
             self.restoreGeometry(geo)
-        else:
-            # Center on primary screen with default dimensions
-            screen = QApplication.primaryScreen()
-            if screen:
-                g = screen.availableGeometry()
-                x = g.x() + (g.width() - self.DEFAULT_WIDTH) // 2
-                y = g.y() + (g.height() - self.DEFAULT_HEIGHT) // 2
-                self.setGeometry(x, y, self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
-            else:
-                self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
+        self._adjust_window_geometry(preserve_position=True)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._adjust_window_geometry(preserve_position=True)
 
     def closeEvent(self, event):
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
@@ -588,6 +649,8 @@ class NotesListWindow(QWidget):
         else:
             self.empty_label.hide()
             self.scroll_area.show()
+
+        self._adjust_window_geometry(preserve_position=True)
 
     def _create_new_note(self):
         if self.tray_manager and hasattr(self.tray_manager, "_create_new_note"):
