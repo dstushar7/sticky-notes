@@ -1,10 +1,20 @@
 [Desktop Entry]
 Name=Sticky Notes
 Comment=A simple sticky notes application with PyQt6 system tray support
-Exec=stickynotes-dabobroto.stickynotes
-Icon=${SNAP}/meta/gui/stickynotes.png
+Exec=stickynotes-dabobroto.stickynotes %U
+Icon=${SNAP}/meta/gui/icon.png
 Terminal=false
 Type=Application
-Categories=Utility
-StartupNotify=false
-StartupWMClass=stickynotes;
+Categories=Utility;TextEditor;
+Keywords=sticky;notes;note;memo;post-it;pad;
+StartupNotify=true
+StartupWMClass=stickynotes
+Actions=NewNote;NotesList;
+
+[Desktop Action NewNote]
+Name=New Note
+Exec=stickynotes-dabobroto.stickynotes --new-note
+
+[Desktop Action NotesList]
+Name=Notes List
+Exec=stickynotes-dabobroto.stickynotes --notes-list

@@ -89,10 +89,17 @@ class TrayManager:
                 except OSError:
                     pass  # filesystem hiccup; user can enable via Settings
             elif not is_autostart:
-                self._create_new_note()
-            # else: autostart with no saved notes → stay silent in the tray.
+                if "--notes-list" in sys.argv:
+                    self._show_notes_list()
+                else:
+                    self._create_new_note()
 
             settings.setValue("first_launch_completed", True)
+        else:
+            if "--new-note" in sys.argv:
+                self._create_new_note()
+            elif "--notes-list" in sys.argv:
+                self._show_notes_list()
 
         # Self-heal the autostart entry on every launch. If the user enabled
         # autostart on an older version with a different Exec format (e.g.
