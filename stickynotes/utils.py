@@ -314,7 +314,7 @@ def create_gear_icon(color: str, size: int = 24) -> QIcon:
 
 
 def create_share_icon(color: str, size: int = 16) -> QIcon:
-    """Crisp vector Share/Export icon: box with arrow pointing up-right."""
+    """Crisp vector Paper Airplane (Send/Share) icon."""
     pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
     stroke = max(1.3, size * 0.085)
@@ -325,38 +325,28 @@ def create_share_icon(color: str, size: int = 16) -> QIcon:
     p.setPen(pen)
     p.setBrush(Qt.BrushStyle.NoBrush)
 
-    # Box with open top-right corner
-    x1 = size * 0.20
-    x2 = size * 0.80
-    y1 = size * 0.22
-    y2 = size * 0.82
-    split_x = size * 0.52
-    split_y = size * 0.50
+    tip = QPointF(size * 0.86, size * 0.14)
+    tail_left = QPointF(size * 0.14, size * 0.50)
+    tail_bot = QPointF(size * 0.50, size * 0.86)
+    inner_fold = QPointF(size * 0.44, size * 0.56)
 
-    box_path = QPainterPath()
-    box_path.moveTo(split_x, y1)
-    box_path.lineTo(x1, y1)
-    box_path.lineTo(x1, y2)
-    box_path.lineTo(x2, y2)
-    box_path.lineTo(x2, split_y)
-    p.drawPath(box_path)
+    plane = QPainterPath()
+    plane.moveTo(tip)
+    plane.lineTo(tail_left)
+    plane.lineTo(inner_fold)
+    plane.lineTo(tail_bot)
+    plane.closeSubpath()
+    p.drawPath(plane)
 
-    # Arrow pointing up-right
-    arrow_tip = QPointF(size * 0.82, size * 0.20)
-    arrow_start = QPointF(size * 0.44, size * 0.58)
-    p.drawLine(arrow_start, arrow_tip)
-
-    # Arrow head wings
-    wing_len = size * 0.26
-    p.drawLine(arrow_tip, QPointF(arrow_tip.x() - wing_len, arrow_tip.y()))
-    p.drawLine(arrow_tip, QPointF(arrow_tip.x(), arrow_tip.y() + wing_len))
+    # Center crease line
+    p.drawLine(tip, inner_fold)
 
     p.end()
     return QIcon(pm)
 
 
 def create_receive_icon(color: str, size: int = 16) -> QIcon:
-    """Crisp vector Receive/Import icon: tray with downward arrow."""
+    """Crisp vector Inbox Tray with Plus (+) for Receive/Import."""
     pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
     stroke = max(1.3, size * 0.085)
@@ -368,29 +358,24 @@ def create_receive_icon(color: str, size: int = 16) -> QIcon:
     p.setBrush(Qt.BrushStyle.NoBrush)
 
     # Tray at bottom
-    x1 = size * 0.18
-    x2 = size * 0.82
-    y_tray_top = size * 0.60
-    y_tray_bot = size * 0.84
+    x1 = size * 0.16
+    x2 = size * 0.84
+    y_top = size * 0.56
+    y_bot = size * 0.84
 
-    tray_path = QPainterPath()
-    tray_path.moveTo(x1, y_tray_top)
-    tray_path.lineTo(x1, y_tray_bot)
-    tray_path.lineTo(x2, y_tray_bot)
-    tray_path.lineTo(x2, y_tray_top)
-    p.drawPath(tray_path)
+    tray = QPainterPath()
+    tray.moveTo(x1, y_top)
+    tray.lineTo(x1, y_bot)
+    tray.lineTo(x2, y_bot)
+    tray.lineTo(x2, y_top)
+    p.drawPath(tray)
 
-    # Downward arrow
+    # Plus (+) symbol above tray
     cx = size / 2.0
-    arrow_top = size * 0.16
-    arrow_tip_y = size * 0.58
-    p.drawLine(QPointF(cx, arrow_top), QPointF(cx, arrow_tip_y))
-
-    # Arrow head pointing down
-    wing_dx = size * 0.20
-    wing_dy = size * 0.18
-    p.drawLine(QPointF(cx - wing_dx, arrow_tip_y - wing_dy), QPointF(cx, arrow_tip_y))
-    p.drawLine(QPointF(cx + wing_dx, arrow_tip_y - wing_dy), QPointF(cx, arrow_tip_y))
+    cy = size * 0.34
+    plus_len = size * 0.17
+    p.drawLine(QPointF(cx - plus_len, cy), QPointF(cx + plus_len, cy))
+    p.drawLine(QPointF(cx, cy - plus_len), QPointF(cx, cy + plus_len))
 
     p.end()
     return QIcon(pm)
