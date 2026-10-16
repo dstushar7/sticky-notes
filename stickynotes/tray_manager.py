@@ -191,7 +191,7 @@ class TrayManager:
 
     def _save_all_notes(self):
         for note in self.open_notes.values():
-            note._save()
+            note._save(force=True)
 
     def _setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(utils.create_tray_icon(), parent=self.app)

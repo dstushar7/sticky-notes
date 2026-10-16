@@ -1141,6 +1141,7 @@ class StickyNote(QWidget):
         # this together with app_id to track per-window placement memory.
         self.setWindowTitle("Sticky Note")
         self._is_being_deleted = False
+        self._is_dirty = (note_id is None)
         self._theme_name = theme
         self._is_pinned = bool(pinned)
         self._hide_from_dock = bool(hide_from_dock)
@@ -1333,6 +1334,7 @@ class StickyNote(QWidget):
         the state change applies immediately with no deferral."""
         self._is_pinned = pinned
         xwm.set_always_on_top(self, pinned)
+        self._mark_dirty(debounce=False)
         self._save()
 
     def _reapply_initial_position(self):
@@ -1449,8 +1451,13 @@ class StickyNote(QWidget):
     def _setup_autosave(self):
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setInterval(config.AUTOSAVE_INTERVAL_MS)
-        self._autosave_timer.timeout.connect(self._save)
+        self._autosave_timer.timeout.connect(self._autosave_tick)
         self._autosave_timer.start()
+
+    def _autosave_tick(self):
+        """Periodic safety net: only writes to disk if content or state actually changed."""
+        if self._is_dirty:
+            self._save()
 
     # ------------------------------------------------------------------
     # Theme
@@ -1577,6 +1584,7 @@ class StickyNote(QWidget):
         self._theme_name = theme_name
         self._apply_theme(utils.get_theme(theme_name))
         self._close_options_panel()
+        self._mark_dirty(debounce=False)
         self._save()
 
     # ------------------------------------------------------------------
@@ -1644,6 +1652,7 @@ class StickyNote(QWidget):
     def _collapse(self):
         self._pre_collapse_height = self.height()
         self._is_collapsed = True
+        self._mark_dirty()
         # Lock title editing while collapsed — committing first so any
         # in-progress rename isn't silently dropped.
         self.title_bar.set_title_editable(False)
@@ -1681,6 +1690,7 @@ class StickyNote(QWidget):
 
     def _expand(self):
         self._is_collapsed = False
+        self._mark_dirty()
         target_h = max(self._pre_collapse_height, config.MIN_NOTE_HEIGHT)
         # Re-enable title click-to-rename now that the body is back.
         self.title_bar.set_title_editable(True)
@@ -1853,6 +1863,12 @@ class StickyNote(QWidget):
         """Push the current `_title` value to the title bar."""
         self.title_bar.set_title_text(self._title)
 
+    def _mark_dirty(self, debounce: bool = True):
+        """Mark note state as modified and optionally schedule a debounced save."""
+        self._is_dirty = True
+        if debounce and hasattr(self, "_save_debounce") and not self._is_being_deleted:
+            self._save_debounce.start()
+
     def _on_body_changed(self):
         """Body content changed via user input. Updates last_edited and,
         while the title is still on the smart default, re-derives the
@@ -1865,8 +1881,7 @@ class StickyNote(QWidget):
                 self._refresh_title_display()
                 self.titleChanged.emit(self.note_id, self._title)
         # Debounce save so a typing burst doesn't spam QSettings
-        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
-            self._save_debounce.start()
+        self._mark_dirty()
 
     def _on_title_committed(self, raw_text: str):
         """Slot for the title bar's QLineEdit commit. Trims, caps length,
@@ -1885,8 +1900,7 @@ class StickyNote(QWidget):
         self._last_edited = _now_iso()
         self._refresh_title_display()
         self.titleChanged.emit(self.note_id, self._title)
-        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
-            self._save_debounce.start()
+        self._mark_dirty()
 
     def _remove_list(self, cursor: QTextCursor):
         start = cursor.selectionStart()
@@ -2117,8 +2131,7 @@ class StickyNote(QWidget):
         super().moveEvent(event)
         # Save position shortly after the user finishes moving the window.
         # Debouncing avoids hammering QSettings during a drag.
-        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
-            self._save_debounce.start()
+        self._mark_dirty()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2131,8 +2144,7 @@ class StickyNote(QWidget):
         if getattr(self, "_size_unlocked", False):
             self._relock_timer.start()
         # Save size after the user finishes resizing
-        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
-            self._save_debounce.start()
+        self._mark_dirty()
 
     def _do_resize(self, gpos: QPoint):
         dx = gpos.x() - self._resize_start_global.x()
@@ -2165,8 +2177,10 @@ class StickyNote(QWidget):
     def last_edited(self) -> str:
         return self._last_edited
 
-    def _save(self):
+    def _save(self, force: bool = False):
         if self._is_being_deleted:
+            return
+        if not self._is_dirty and not force:
             return
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
@@ -2181,10 +2195,11 @@ class StickyNote(QWidget):
         settings.setValue(f"{self.note_id}/last_edited", self._last_edited)
         settings.setValue(f"{self.note_id}/pinned",      self._is_pinned)
         settings.endGroup()
+        self._is_dirty = False
 
     def closeEvent(self, event):
         if not self._is_being_deleted:
-            self._save()
+            self._save(force=True)
         super().closeEvent(event)
 
 
