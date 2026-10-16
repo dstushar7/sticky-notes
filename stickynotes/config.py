@@ -80,13 +80,14 @@ SHARE_COPIED_FEEDBACK_MS = 1500
 #
 # The formatting keys match FormatBar button attribute names (bold_btn -> "bold").
 SHORTCUTS = {
-    "new_note":  "Ctrl+N",
-    "bold":      "Ctrl+B",
-    "italic":    "Ctrl+I",
-    "underline": "Ctrl+U",
-    "strike":    "Ctrl+Shift+S",
-    "bullet":    "Ctrl+Shift+L",
-    "checklist": "Ctrl+Shift+K",
+    "new_note":   "Ctrl+N",
+    "close_note": "Ctrl+W",
+    "bold":       "Ctrl+B",
+    "italic":     "Ctrl+I",
+    "underline":  "Ctrl+U",
+    "strike":     "Ctrl+Shift+S",
+    "bullet":     "Ctrl+Shift+L",
+    "checklist":  "Ctrl+Shift+K",
 }
 
 # Reference table rendered by ShortcutsDialog: [(section, [(keys, what)])].
@@ -99,6 +100,7 @@ SHORTCUTS = {
 SHORTCUT_REFERENCE = [
     ("Notes", [
         (SHORTCUTS["new_note"],     "New note"),
+        (SHORTCUTS["close_note"],   "Close note"),
         ("Double-click title bar",  "Collapse or expand a note"),
         ("Click the title",         "Rename a note"),
         ("Drag any edge or corner", "Resize a note"),

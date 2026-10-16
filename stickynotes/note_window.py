@@ -845,6 +845,7 @@ class DragHandle(QWidget):
 class TitleBar(QWidget):
     newNoteRequested = pyqtSignal()
     optionsRequested = pyqtSignal()
+    closeRequested = pyqtSignal()
     titleCommitted = pyqtSignal(str)
     pinToggled = pyqtSignal(bool)              # emits the new pinned state
 
@@ -870,10 +871,10 @@ class TitleBar(QWidget):
         layout.setSpacing(4)  # tiny breathing room between chip buttons and pill
 
         self.add_btn = FloatingButton(
-            "+",
+            "",
             tone=FloatingButton.Tone.TITLE_BAR,
-            font_css="font-size: 16pt;",
             tooltip="New note",
+            shortcut=config.SHORTCUTS.get("new_note", "Ctrl+N"),
         )
         self.add_btn.clicked.connect(self.newNoteRequested.emit)
         layout.addWidget(self.add_btn)
@@ -907,13 +908,21 @@ class TitleBar(QWidget):
         layout.addWidget(self.pin_btn)
 
         self.opts_btn = FloatingButton(
-            "•••",
+            "",
             tone=FloatingButton.Tone.TITLE_BAR,
-            font_css="font-size: 10pt;",
             tooltip="Options",
         )
         self.opts_btn.clicked.connect(self.optionsRequested.emit)
         layout.addWidget(self.opts_btn)
+
+        self.close_btn = FloatingButton(
+            "",
+            tone=FloatingButton.Tone.CLOSE,
+            tooltip="Close note",
+            shortcut=config.SHORTCUTS.get("close_note", "Ctrl+W"),
+        )
+        self.close_btn.clicked.connect(self.closeRequested.emit)
+        layout.addWidget(self.close_btn)
 
     def set_pinned(self, pinned: bool):
         """Reflect state in the button WITHOUT re-emitting pinToggled — used
@@ -926,7 +935,7 @@ class TitleBar(QWidget):
 
     def _refresh_pin_icon(self, *_args):
         """Repaint the thumbtack for the current checked state and theme colour."""
-        icon_px = max(14, int(FloatingButton.TITLE_BAR_SIZE * 0.66))
+        icon_px = max(14, int(FloatingButton.TITLE_BAR_SIZE * 0.58))
         self.pin_btn.setIcon(utils.create_pin_icon(
             self._btn_color, icon_px, filled=self.pin_btn.isChecked()
         ))
@@ -946,8 +955,19 @@ class TitleBar(QWidget):
         self._btn_color = btn_color
         self._rebuild_bar_style()
         FloatingButton.apply_theme_to_all(
-            (self.add_btn, self.pin_btn, self.opts_btn), btn_color, is_dark_theme
+            (self.add_btn, self.pin_btn, self.opts_btn, self.close_btn), btn_color, is_dark_theme
         )
+
+        icon_px = max(14, int(FloatingButton.TITLE_BAR_SIZE * 0.58))
+        self.add_btn.setIcon(utils.create_plus_icon(btn_color, icon_px))
+        self.add_btn.setIconSize(QSize(icon_px, icon_px))
+
+        self.opts_btn.setIcon(utils.create_options_icon(btn_color, icon_px))
+        self.opts_btn.setIconSize(QSize(icon_px, icon_px))
+
+        self.close_btn.setIcon(utils.create_close_icon(btn_color, icon_px))
+        self.close_btn.setIconSize(QSize(icon_px, icon_px))
+
         # Painted thumbtack, recolored to match the current btn_color — same
         # approach FormatBar uses for the bullet icon.
         self._refresh_pin_icon()
@@ -1020,7 +1040,7 @@ class FormatBar(QWidget):
         self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: bold;",            "Bold",      "bold")
         self.italic_btn    = self._make_btn("I", "italicBtn",    "font-style: italic;",           "Italic",    "italic")
         self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline;",   "Underline", "underline")
-        self.strike_btn    = self._make_btn("S", "strikeBtn",    "text-decoration: line-through;", "Strikethrough", "strike")
+        self.strike_btn    = self._make_btn("ab", "strikeBtn",   "text-decoration: line-through;", "Strikethrough", "strike")
         # Bullet button uses a painted icon (set in apply_colors); empty text.
         # With no label at all, the tooltip/accessible name is the ONLY thing
         # identifying this button to either a sighted or a screen-reader user.
@@ -1375,6 +1395,7 @@ class StickyNote(QWidget):
             lambda: self.newNoteRequested.emit(self._theme_name)
         )
         self.title_bar.optionsRequested.connect(self._show_options_panel)
+        self.title_bar.closeRequested.connect(self.close)
         self.title_bar.titleCommitted.connect(self._on_title_committed)
         bg_layout.addWidget(self.title_bar)
 
@@ -1448,6 +1469,10 @@ class StickyNote(QWidget):
         new_sc.activated.connect(
             lambda: self.newNoteRequested.emit(self._theme_name)
         )
+
+        close_sc = QShortcut(QKeySequence(config.SHORTCUTS["close_note"]), self)
+        close_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        close_sc.activated.connect(self.close)
 
     def _setup_autosave(self):
         self._autosave_timer = QTimer(self)

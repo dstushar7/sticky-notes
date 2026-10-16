@@ -5,23 +5,34 @@ from PyQt6.QtCore import Qt, QPointF, QRectF
 from . import config
 
 
+def _make_crisp_pixmap(size: int, scale: int = 4):
+    """Creates a high-DPI transparent QPixmap and initialized antialiased QPainter.
+
+    Using 4x supersampling with setDevicePixelRatio ensures vector drawing
+    is rendered razor-sharp and crispy on any display scaling (1080p, 2K, 4K, Retina).
+    """
+    pm = QPixmap(size * scale, size * scale)
+    pm.setDevicePixelRatio(scale)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    return pm, p
+
+
 def create_tray_icon() -> QIcon:
     """Generates a simple icon for the system tray using the default theme color."""
-    pixmap = QPixmap(32, 32)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
+    pm, painter = _make_crisp_pixmap(32)
     painter.setBrush(QColor(config.THEMES[config.DEFAULT_THEME]["bg"]))
-    painter.drawRect(4, 4, 24, 24)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawRoundedRect(QRectF(4, 4, 24, 24), 4, 4)
     painter.end()
-    return QIcon(pixmap)
+    return QIcon(pm)
 
 
 def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
     """A 'bulleted list' icon: three small dots, each followed by a short bar."""
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(qcolor)
@@ -53,10 +64,7 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
     with a tick in the first box. Deliberately mirrors the geometry of
     create_bullet_list_icon so the two toolbar buttons read as siblings —
     same three rows, same bar lengths, box instead of bullet."""
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
 
     rows = 3
@@ -105,22 +113,8 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
 
 
 def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
-    """A thumbtack: round head, flange, and a stubby needle.
-
-    Painted rather than drawn from a font glyph on purpose — 📌 and 📍 resolve
-    to a colour emoji font on most Linux setups, which ignores the button's
-    theme colour and renders as a coloured blob at small sizes. Same reason
-    create_bullet_list_icon exists.
-
-    `filled` carries the pinned/unpinned state. FloatingButton's :checked
-    background alone is too subtle to read at a glance on the lighter themes
-    (idle glass is 0.55 alpha vs 0.85 checked), so the icon itself changes:
-    solid when pinned, outline when not. Same convention as a bookmark toggle.
-    """
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    """A thumbtack: round head, flange, and a stubby needle."""
+    pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
 
     if filled:
@@ -128,8 +122,6 @@ def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
         p.setBrush(qcolor)
     else:
         pen = QPen(qcolor)
-        # Scale the stroke with the icon so the outline stays visible at 16px
-        # without going chunky at 24px.
         pen.setWidthF(max(1.2, size * 0.085))
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         p.setPen(pen)
@@ -144,8 +136,6 @@ def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
     tip_y = size * 0.90
 
     p.drawEllipse(QPointF(cx, head_cy), head_r, head_r)
-    # Flange + needle as one silhouette: a wide shoulder tapering to a point.
-    # The shoulder is what distinguishes a thumbtack from a lollipop.
     p.drawPolygon(QPolygonF([
         QPointF(cx - flange_half, flange_y),
         QPointF(cx + flange_half, flange_y),
@@ -154,6 +144,55 @@ def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
         QPointF(cx - needle_half, flange_y + size * 0.10),
     ]))
 
+    p.end()
+    return QIcon(pm)
+
+
+def create_plus_icon(color: str, size: int = 24) -> QIcon:
+    """Crisp geometric '+' icon for the new note button."""
+    pm, p = _make_crisp_pixmap(size)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.2, size * 0.08))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+
+    cx, cy = size / 2.0, size / 2.0
+    half_arm = size * 0.28
+    p.drawLine(QPointF(cx - half_arm, cy), QPointF(cx + half_arm, cy))
+    p.drawLine(QPointF(cx, cy - half_arm), QPointF(cx, cy + half_arm))
+    p.end()
+    return QIcon(pm)
+
+
+def create_options_icon(color: str, size: int = 24) -> QIcon:
+    """Crisp three horizontal dots '•••' icon for the options button."""
+    pm, p = _make_crisp_pixmap(size)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+
+    cx, cy = size / 2.0, size / 2.0
+    spacing = size * 0.24
+    dot_r = max(1.2, size * 0.075)
+
+    p.drawEllipse(QPointF(cx - spacing, cy), dot_r, dot_r)
+    p.drawEllipse(QPointF(cx, cy), dot_r, dot_r)
+    p.drawEllipse(QPointF(cx + spacing, cy), dot_r, dot_r)
+    p.end()
+    return QIcon(pm)
+
+
+def create_close_icon(color: str, size: int = 24) -> QIcon:
+    """Crisp geometric '✕' icon for the close note window button."""
+    pm, p = _make_crisp_pixmap(size)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.2, size * 0.08))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+
+    cx, cy = size / 2.0, size / 2.0
+    d = size * 0.24
+    p.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
+    p.drawLine(QPointF(cx - d, cy + d), QPointF(cx + d, cy - d))
     p.end()
     return QIcon(pm)
 
