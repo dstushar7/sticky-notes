@@ -455,7 +455,7 @@ class NotesListWindow(QWidget):
         self.cards_container = QWidget()
         self.cards_container.setStyleSheet("background-color: transparent;")
         self.cards_layout = QVBoxLayout(self.cards_container)
-        self.cards_layout.setContentsMargins(0, 6, 10, 6)
+        self.cards_layout.setContentsMargins(0, 6, 18, 6)
         self.cards_layout.setSpacing(10)
         self.cards_layout.addStretch(1)
 
