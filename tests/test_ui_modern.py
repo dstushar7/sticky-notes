@@ -166,3 +166,15 @@ def test_format_bar_margins_consistent(qapp):
     assert margins.left() == margins.bottom() == 4
 
 
+def test_create_tray_icon_loaded(qapp):
+    """create_tray_icon should load the custom artwork and provide crisp pixmaps."""
+    icon = utils.create_tray_icon()
+    assert isinstance(icon, QIcon)
+    assert not icon.isNull()
+    for size in (16, 22, 24, 32, 48):
+        pm = icon.pixmap(size, size)
+        assert not pm.isNull()
+        assert pm.width() > 0 and pm.height() > 0
+
+
+

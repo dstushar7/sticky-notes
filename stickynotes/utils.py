@@ -1,7 +1,6 @@
-# stickynotes/utils.py
-
-from PyQt6.QtGui import QPainter, QColor, QPixmap, QIcon, QPen, QPolygonF, QPainterPath
-from PyQt6.QtCore import Qt, QPointF, QRectF
+import os
+from PyQt6.QtGui import QPainter, QColor, QPixmap, QIcon, QPen, QPolygonF, QPainterPath, QImage
+from PyQt6.QtCore import Qt, QPointF, QRectF, QSize
 from . import config
 
 
@@ -21,7 +20,27 @@ def _make_crisp_pixmap(size: int, scale: int = 4):
 
 
 def create_tray_icon() -> QIcon:
-    """Generates a simple icon for the system tray using the default theme color."""
+    """Returns the custom sticky note tray icon with pre-scaled multi-resolution pixmaps."""
+    icon_paths = [
+        os.path.join(os.path.dirname(__file__), "assets", "tray_icon.png"),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "snap", "gui", "tray_icon.png"),
+    ]
+    for path in icon_paths:
+        if os.path.exists(path):
+            img = QImage(path)
+            if not img.isNull():
+                icon = QIcon()
+                for size in (16, 22, 24, 32, 48, 64, 128, 256, 512, 1024):
+                    scaled = img.scaled(
+                        size,
+                        size,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    icon.addPixmap(QPixmap.fromImage(scaled))
+                return icon
+
+    # Fallback to theme color rounded rectangle if image file is missing
     pm, painter = _make_crisp_pixmap(32)
     painter.setBrush(QColor(config.THEMES[config.DEFAULT_THEME]["bg"]))
     painter.setPen(Qt.PenStyle.NoPen)

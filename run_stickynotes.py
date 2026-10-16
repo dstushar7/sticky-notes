@@ -98,6 +98,7 @@ def main():
     app.setApplicationName(config.APP_NAME)
     app.setApplicationDisplayName("Sticky Notes")
     app.setDesktopFileName("stickynotes")
+    app.setWindowIcon(utils.create_tray_icon())
 
     # Style tooltips app-wide before any window exists, so the first tooltip
     # shown is already themed. Currently the only app-level stylesheet — if
