@@ -1019,9 +1019,16 @@ class TitleBar(QWidget):
             self.close_btn.hide()
             self.layout().setContentsMargins(0, 0, 0, 0)
             self.setFixedHeight(config.TITLE_BAR_UNFOCUSED_HEIGHT)
+        self._rebuild_bar_style()
 
     def _rebuild_bar_style(self):
-        r = config.CORNER_RADIUS_PX
+        target_r = (
+            config.CORNER_RADIUS_PX
+            if (self._is_focused or self._is_collapsed_style)
+            else min(config.TITLE_BAR_UNFOCUSED_HEIGHT, config.CORNER_RADIUS_PX)
+        )
+        h = self.height()
+        r = min(h, target_r) if h > 0 else target_r
         bottom_radius = r if self._is_collapsed_style else 0
         self.setStyleSheet(f"""
             QWidget#titleBar {{

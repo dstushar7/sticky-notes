@@ -135,12 +135,25 @@ def test_click_top_stripe_allows_drag(qapp):
 
 
 def test_collapsed_note_keeps_title_bar(qapp):
-    """When a note is collapsed, title bar remains in pill shape and does not collapse to 6px."""
+    """When a note is collapsed, title bar remains in pill shape and does not collapse to stripe height."""
     note = StickyNote(note_id="test-collapsed-id", content="Body text")
     note._collapse_immediately()
     assert note._is_collapsed is True
 
-    # Attempting to unfocus shouldn't collapse the title bar to 6px
+    # Attempting to unfocus shouldn't collapse the title bar
     note.set_focused(False)
     assert note.title_bar.height() == config.TITLE_BAR_HEIGHT
     note.close()
+
+
+def test_unfocused_title_bar_has_rounded_corners(qapp):
+    """Unfocused title bar stylesheet must define border-top-left-radius and border-top-right-radius matching corner radius."""
+    tb = TitleBar()
+    tb.show()
+    tb.set_focused(False)
+    qss = tb.styleSheet()
+    assert f"border-top-left-radius: {config.CORNER_RADIUS_PX}px" in qss
+    assert f"border-top-right-radius: {config.CORNER_RADIUS_PX}px" in qss
+    assert tb.height() == config.TITLE_BAR_UNFOCUSED_HEIGHT
+    tb.close()
+
