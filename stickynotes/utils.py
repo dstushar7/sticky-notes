@@ -219,6 +219,82 @@ def create_close_icon(color: str, size: int = 24) -> QIcon:
     return QIcon(pm)
 
 
+def create_menu_lines_icon(color: str, size: int = 24) -> QIcon:
+    """Crisp three horizontal lines '≡' icon for the Notes list button."""
+    pm, p = _make_crisp_pixmap(size)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.3, size * 0.09))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+
+    cx = size / 2.0
+    half_w = size * 0.32
+    left = cx - half_w
+    right = cx + half_w
+    y_spacing = size * 0.22
+
+    for i in (-1, 0, 1):
+        y = size / 2.0 + i * y_spacing
+        p.drawLine(QPointF(left, y), QPointF(right, y))
+
+    p.end()
+    return QIcon(pm)
+
+
+def create_search_icon(color: str, size: int = 24) -> QIcon:
+    """Crisp magnifying glass icon for the notes search bar."""
+    pm, p = _make_crisp_pixmap(size)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.3, size * 0.09))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+    r = size * 0.25
+    cx = size * 0.40
+    cy = size * 0.40
+    p.drawEllipse(QPointF(cx, cy), r, r)
+
+    # 45-degree angled handle
+    h_start_x = cx + r * 0.707
+    h_start_y = cy + r * 0.707
+    h_end_x = size * 0.82
+    h_end_y = size * 0.82
+    p.drawLine(QPointF(h_start_x, h_start_y), QPointF(h_end_x, h_end_y))
+    p.end()
+    return QIcon(pm)
+
+
+def create_gear_icon(color: str, size: int = 24) -> QIcon:
+    """Crisp settings gear icon for the notes list header."""
+    import math
+    pm, p = _make_crisp_pixmap(size)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.2, size * 0.08))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+
+    cx, cy = size / 2.0, size / 2.0
+    outer_r = size * 0.38
+    inner_r = size * 0.26
+    cogs = 6
+    for i in range(cogs):
+        angle = i * (2 * math.pi / cogs)
+        x1 = cx + math.cos(angle) * inner_r
+        y1 = cy + math.sin(angle) * inner_r
+        x2 = cx + math.cos(angle) * outer_r
+        y2 = cy + math.sin(angle) * outer_r
+        p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
+    ring_pen = QPen(QColor(color))
+    ring_pen.setWidthF(max(1.4, size * 0.10))
+    p.setPen(ring_pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(QPointF(cx, cy), size * 0.22, size * 0.22)
+    p.end()
+    return QIcon(pm)
+
+
 def tooltip_stylesheet() -> str:
     """App-wide QToolTip styling, built from the config tokens.
 

@@ -290,8 +290,8 @@ class NoteTextEdit(QTextEdit):
 class _DeleteButton(QPushButton):
     confirmed = pyqtSignal()
 
-    _IDLE_LABEL = "🗑  Delete Note"
-    _ARMED_LABEL = "✓  Click again to confirm"
+    _IDLE_LABEL = "🗑   Delete note"
+    _ARMED_LABEL = "✓   Click again to confirm"
 
     def __init__(self, parent=None):
         super().__init__(self._IDLE_LABEL, parent)
@@ -327,30 +327,23 @@ class _DeleteButton(QPushButton):
         self._apply_idle_style()
 
     def _apply_idle_style(self):
-        # Opaque colors equivalent to the original rgba(220, 50, 60, α)
-        # composited against the panel's #ffffff background. Kept opaque on
-        # purpose: WA_TranslucentBackground on the OptionsPanel can fail to
-        # reliably paint the panel's white BG under child widgets on Wayland
-        # (via XWayland), causing the note's text to bleed through any
-        # translucent child. These hex values render IDENTICALLY to the
-        # original on the white panel but never leak content behind.
         self.setStyleSheet("""
             QPushButton {
-                background-color: #fceaec;
-                color: #c0341d;
-                border: 1px solid #f7d2d4;
-                border-radius: 8px;
-                padding: 8px 12px;
+                background-color: transparent;
+                color: #2b2b2b;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 10px;
                 font-size: 10pt;
                 font-weight: 500;
-                text-align: center;
+                text-align: left;
             }
             QPushButton:hover {
-                background-color: #f9dadc;
-                border: 1px solid #f3b7bb;
+                background-color: #fdf0f0;
+                color: #c0341d;
             }
             QPushButton:pressed {
-                background-color: #f5c6c8;
+                background-color: #fce4e6;
             }
         """)
 
@@ -360,11 +353,11 @@ class _DeleteButton(QPushButton):
                 background-color: #d33f2f;
                 color: #ffffff;
                 border: 1px solid #b03224;
-                border-radius: 8px;
-                padding: 8px 12px;
+                border-radius: 6px;
+                padding: 8px 10px;
                 font-size: 10pt;
                 font-weight: 600;
-                text-align: center;
+                text-align: left;
             }
             QPushButton:hover {
                 background-color: #c0341d;
@@ -381,6 +374,7 @@ class _DeleteButton(QPushButton):
 class OptionsPanel(QWidget):
     themeSelected = pyqtSignal(str)
     deleteRequested = pyqtSignal()
+    notesListRequested = pyqtSignal()
     shareRequested = pyqtSignal()
     receiveRequested = pyqtSignal()
     # Emitted on every dismissal (outside click, explicit close, theme pick).
@@ -426,7 +420,7 @@ class OptionsPanel(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         # Row 1 — color swatches
         swatch_row = QHBoxLayout()
@@ -458,8 +452,40 @@ class OptionsPanel(QWidget):
         layout.addLayout(swatch_row)
         layout.addWidget(self._separator())
 
-        # Row 2 — Share / Receive. Receive doesn't act on this note (it makes
-        # a new one) but lives here too, so it's reachable without the tray.
+        # Notes list action button (matching MS Sticky Notes menu)
+        self.notes_list_btn = QPushButton("≡   Notes list", self)
+        self.notes_list_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.notes_list_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.notes_list_btn.setToolTip("Open notes list")
+        self.notes_list_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #2b2b2b;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 10px;
+                font-size: 10pt;
+                font-weight: 500;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: #f0f1f3;
+            }
+            QPushButton:pressed {
+                background-color: #e2e4e8;
+            }
+        """)
+        self.notes_list_btn.clicked.connect(self._on_notes_list_clicked)
+        layout.addWidget(self.notes_list_btn)
+
+        # Destructive action — two-click confirm pattern lives inside the button
+        delete_btn = _DeleteButton(self)
+        delete_btn.confirmed.connect(self.deleteRequested.emit)
+        layout.addWidget(delete_btn)
+
+        layout.addWidget(self._separator())
+
+        # Share / Receive row
         share_row = QHBoxLayout()
         share_row.setSpacing(6)
         self._share_btn = self._action_button(
@@ -476,16 +502,11 @@ class OptionsPanel(QWidget):
         share_row.addWidget(receive_btn)
         layout.addLayout(share_row)
 
-        # Delete sits alone below its own separator so the destructive action
-        # stays visually apart from everything else.
-        layout.addWidget(self._separator())
+        self.setFixedWidth(230)
 
-        # Destructive action — two-click confirm pattern lives inside the button
-        delete_btn = _DeleteButton(self)
-        delete_btn.confirmed.connect(self.deleteRequested.emit)
-        layout.addWidget(delete_btn)
-
-        self.setFixedWidth(220)
+    def _on_notes_list_clicked(self):
+        self.notesListRequested.emit()
+        self.close()
 
     # Neutral and "done" styles for the Share / Receive buttons. Opaque colours
     # for the same reason as _DeleteButton._apply_idle_style.
@@ -1183,6 +1204,8 @@ class FormatBar(QWidget):
 class StickyNote(QWidget):
     noteDeleted = pyqtSignal(str)
     newNoteRequested = pyqtSignal(str)        # emits theme_name
+    notesListRequested = pyqtSignal()
+    noteSaved = pyqtSignal(str)               # emits note_id
     titleChanged = pyqtSignal(str, str)        # emits (note_id, new_title)
     receiveRequested = pyqtSignal(str)         # emits note_id (placement anchor)
 
@@ -1657,6 +1680,7 @@ class StickyNote(QWidget):
         panel = OptionsPanel(self._theme_name, parent=self)
         panel.themeSelected.connect(self._change_theme)
         panel.deleteRequested.connect(self._handle_delete)
+        panel.notesListRequested.connect(self.notesListRequested.emit)
         panel.shareRequested.connect(self._share)
         panel.receiveRequested.connect(self._request_receive)
         panel.dismissed.connect(self._on_panel_dismissed)
@@ -2319,6 +2343,7 @@ class StickyNote(QWidget):
             pinned=self._is_pinned,
         )
         self._is_dirty = False
+        self.noteSaved.emit(self.note_id)
 
     def closeEvent(self, event):
         if not self._is_being_deleted:

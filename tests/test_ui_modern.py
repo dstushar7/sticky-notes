@@ -79,6 +79,9 @@ def test_crisp_icon_generators(qapp):
         utils.create_close_icon,
         utils.create_bullet_list_icon,
         utils.create_checklist_icon,
+        utils.create_menu_lines_icon,
+        utils.create_search_icon,
+        utils.create_gear_icon,
     ):
         icon = fn("#1a1a1a", 24)
         assert isinstance(icon, QIcon)

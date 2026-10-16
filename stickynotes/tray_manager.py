@@ -43,6 +43,7 @@ class TrayManager:
         self._shortcuts_dialog = None
         self._receive_dialog = None
         self._receive_anchor_id = None   # note the dialog was opened from
+        self._notes_list_window = None
 
         self.app.setQuitOnLastWindowClosed(False)
         # app.quit() does not call closeEvent on individual windows, so any
@@ -217,6 +218,10 @@ class TrayManager:
         new_note_action.triggered.connect(lambda _checked=False: self._create_new_note())
         self.menu.addAction(new_note_action)
 
+        notes_list_action = QAction("Notes List", parent=self.menu)
+        notes_list_action.triggered.connect(lambda _checked=False: self._show_notes_list())
+        self.menu.addAction(notes_list_action)
+
         receive_action = QAction("Receive Note…", parent=self.menu)
         receive_action.triggered.connect(lambda _checked=False: self._show_receive_dialog())
         self.menu.addAction(receive_action)
@@ -286,11 +291,41 @@ class TrayManager:
     def _focus_note(self, note_id: str):
         note = self.open_notes.get(note_id)
         if note is None:
+            # If the note was closed, re-instantiate from storage
+            data = storage.get_db().get_note(note_id)
+            if data is not None:
+                self._create_new_note(
+                    note_id=data["id"],
+                    content=data["content"],
+                    geometry_data=data["geometry"],
+                    theme=data["theme"],
+                    collapsed=data["collapsed"],
+                    title=data["title"],
+                    last_edited=data["last_edited"],
+                    pinned=data["pinned"],
+                )
+                note = self.open_notes.get(note_id)
+        if note is None:
             return
         note.show()
         note.raise_()
         note.activateWindow()
         note.set_focused(True)
+
+    def _show_notes_list(self):
+        """Open or raise the Notes List hub window."""
+        if self._notes_list_window is None:
+            from .notes_list import NotesListWindow
+            self._notes_list_window = NotesListWindow(tray_manager=self)
+        self._notes_list_window.refresh_notes()
+        self._notes_list_window.show()
+        self._notes_list_window.raise_()
+        self._notes_list_window.activateWindow()
+
+    def _on_note_saved(self, note_id: str):
+        """Callback when a note is saved — keeps Notes List cards up to date."""
+        if self._notes_list_window is not None and self._notes_list_window.isVisible():
+            self._notes_list_window.refresh_notes()
 
     def _create_new_note(
         self,
@@ -310,6 +345,8 @@ class TrayManager:
         )
         note.noteDeleted.connect(self._handle_note_deletion)
         note.newNoteRequested.connect(self._new_note_from_signal)
+        note.notesListRequested.connect(self._show_notes_list)
+        note.noteSaved.connect(self._on_note_saved)
         note.receiveRequested.connect(self._show_receive_dialog)
         note.show()
         self.open_notes[note.note_id] = note
@@ -412,6 +449,8 @@ class TrayManager:
         settings.endGroup()
 
         self.open_notes.pop(note_id, None)
+        if self._notes_list_window is not None and self._notes_list_window.isVisible():
+            self._notes_list_window.refresh_notes()
         print(f"✓ Note {note_id} deleted")
 
     def _load_notes(self):
