@@ -9,14 +9,14 @@ from PyQt6.QtWidgets import (
     QApplication, QDialog, QCheckBox, QFrame, QSystemTrayIcon, QPlainTextEdit,
 )
 from PyQt6.QtCore import (
-    QSettings, pyqtSignal, Qt, QPoint, QRect, QRectF, QSize, QByteArray, QUrl,
+    QSettings, pyqtSignal, Qt, QPoint, QPointF, QRect, QRectF, QSize, QByteArray, QUrl,
     QPropertyAnimation, QParallelAnimationGroup, QEasingCurve,
     QEvent, QTimer,
 )
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextBlockFormat, QTextCursor, QKeySequence,
     QShortcut, QFont, QFontMetrics, QDesktopServices, QPalette, QTextDocument,
-    QPainter, QPen,
+    QPainter, QPen, QPainterPath,
 )
 
 from . import __version__
@@ -372,6 +372,113 @@ class _DeleteButton(QPushButton):
 # ---------------------------------------------------------------------------
 # OptionsPanel — floating popup below the "..." button
 # ---------------------------------------------------------------------------
+class ColorPaletteBar(QWidget):
+    """Horizontal color blocks bar at the top of OptionsPanel.
+    Takes full horizontal space, fills inner rounded corners with zero gaps."""
+
+    themeSelected = pyqtSignal(str)
+
+    def __init__(self, current_theme: str, swatches, corner_radius: float = 8.0, parent=None):
+        super().__init__(parent)
+        self._current_theme = current_theme
+        self._swatches = swatches
+        self._corner_radius = corner_radius
+        self._hovered_idx = -1
+        self.setFixedHeight(34)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_current_theme(self, theme: str):
+        self._current_theme = theme
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = float(self.width())
+        h = float(self.height())
+        r = float(self._corner_radius)
+
+        # Top-left and top-right rounded, bottom flat
+        clip_path = QPainterPath()
+        clip_path.moveTo(r, 0.5)
+        clip_path.lineTo(w - r - 0.5, 0.5)
+        clip_path.arcTo(w - 2 * r - 0.5, 0.5, 2 * r, 2 * r, 90, -90)
+        clip_path.lineTo(w - 0.5, h)
+        clip_path.lineTo(0.5, h)
+        clip_path.lineTo(0.5, r)
+        clip_path.arcTo(0.5, 0.5, 2 * r, 2 * r, 180, -90)
+        clip_path.closeSubpath()
+
+        p.save()
+        p.setClipPath(clip_path)
+
+        n = len(self._swatches)
+        for i, (name, hex_col) in enumerate(self._swatches):
+            x1 = round(i * w / n)
+            x2 = round((i + 1) * w / n)
+            block_rect = QRectF(x1, 0, x2 - x1, h)
+
+            p.fillRect(block_rect, QColor(hex_col))
+
+            # Subtle hover brightening
+            if i == self._hovered_idx:
+                p.fillRect(block_rect, QColor(255, 255, 255, 50))
+
+            # Checkmark for selected theme
+            if name == self._current_theme:
+                tick_color = QColor("#ffffff" if name == "charcoal" else "#1a1a1a")
+                pen = QPen(tick_color, 2)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                p.setPen(pen)
+                cx = (x1 + x2) / 2.0
+                cy = h / 2.0
+                check_path = QPainterPath()
+                check_path.moveTo(cx - 5, cy)
+                check_path.lineTo(cx - 1, cy + 4)
+                check_path.lineTo(cx + 6, cy - 4)
+                p.drawPath(check_path)
+
+        p.restore()
+
+        # Seamless 1px border matching panel top & sides, plus bottom divider
+        p.setPen(QPen(QColor("#3d3d3d"), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(clip_path)
+        p.drawLine(QPointF(0, h - 0.5), QPointF(w, h - 0.5))
+
+    def _index_at(self, x: float) -> int:
+        w = float(self.width())
+        n = len(self._swatches)
+        idx = int(x * n / w)
+        return max(0, min(n - 1, idx))
+
+    def mouseMoveEvent(self, event):
+        idx = self._index_at(event.position().x())
+        if idx != self._hovered_idx:
+            self._hovered_idx = idx
+            name, _ = self._swatches[idx]
+            self.setToolTip(f"{name.capitalize()} theme")
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered_idx = -1
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            idx = self._index_at(event.position().x())
+            name, _ = self._swatches[idx]
+            self._current_theme = name
+            self.update()
+            self.themeSelected.emit(name)
+        super().mousePressEvent(event)
+
+
 class OptionsPanel(QWidget):
     themeSelected = pyqtSignal(str)
     deleteRequested = pyqtSignal()
@@ -427,37 +534,26 @@ class OptionsPanel(QWidget):
             self.deleteLater()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 10)
+        main_layout.setSpacing(6)
 
-        # Row 1 — color swatches
-        swatch_row = QHBoxLayout()
-        swatch_row.setSpacing(4)
-        for name, color in self._SWATCHES:
-            btn = QPushButton("✓" if name == self._current_theme else "")
-            btn.setFixedSize(28, 28)
-            label = name.capitalize()
-            btn.setToolTip(label)
-            btn.setAccessibleName(f"{label} theme")
-            tick_color = "#ffffff" if name == "charcoal" else "#1a1a1a"
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {color};
-                    border-radius: 14px;
-                    color: {tick_color};
-                    font-size: 9pt;
-                    font-weight: bold;
-                    border: none;
-                }}
-                QPushButton:hover {{
-                    border: 2px solid white;
-                }}
-            """)
-            btn.clicked.connect(lambda _checked, n=name: self.themeSelected.emit(n))
-            swatch_row.addWidget(btn)
-        layout.addLayout(swatch_row)
-        layout.addWidget(self._separator())
+        # Row 1 — color blocks bar at top taking all horizontal space with no gaps
+        self.palette_bar = ColorPaletteBar(
+            self._current_theme,
+            self._SWATCHES,
+            corner_radius=config.CORNER_RADIUS_PX,
+            parent=self,
+        )
+        self.palette_bar.themeSelected.connect(self.themeSelected.emit)
+        main_layout.addWidget(self.palette_bar)
+
+        # Content container with side margins for menu buttons
+        content_container = QWidget(self)
+        content_container.setStyleSheet("background: transparent;")
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(10, 0, 10, 0)
+        content_layout.setSpacing(6)
 
         # Notes list action button (matching MS Sticky Notes menu)
         self.notes_list_btn = QPushButton("≡   Notes list", self)
@@ -483,14 +579,14 @@ class OptionsPanel(QWidget):
             }
         """)
         self.notes_list_btn.clicked.connect(self._on_notes_list_clicked)
-        layout.addWidget(self.notes_list_btn)
+        content_layout.addWidget(self.notes_list_btn)
 
         # Destructive action — two-click confirm pattern lives inside the button
         delete_btn = _DeleteButton(self)
         delete_btn.confirmed.connect(self.deleteRequested.emit)
-        layout.addWidget(delete_btn)
+        content_layout.addWidget(delete_btn)
 
-        layout.addWidget(self._separator())
+        content_layout.addWidget(self._separator())
 
         # Share / Receive row
         share_row = QHBoxLayout()
@@ -512,7 +608,9 @@ class OptionsPanel(QWidget):
         receive_btn.clicked.connect(self.receiveRequested.emit)
         share_row.addWidget(self._share_btn)
         share_row.addWidget(receive_btn)
-        layout.addLayout(share_row)
+        content_layout.addLayout(share_row)
+
+        main_layout.addWidget(content_container)
 
         self.setFixedWidth(230)
 

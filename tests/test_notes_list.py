@@ -48,6 +48,49 @@ def test_options_panel_paint_event_opaque_background(qapp):
     panel.close()
 
 
+def test_options_panel_color_blocks_bar(qapp):
+    """OptionsPanel color palette bar spans full width, fills corners, and emits themeSelected."""
+    from PyQt6.QtGui import QPixmap, QMouseEvent
+    from PyQt6.QtCore import QPointF
+    panel = OptionsPanel(current_theme="yellow")
+    panel.show()
+    panel.adjustSize()
+
+    assert hasattr(panel, "palette_bar")
+    assert panel.palette_bar.width() == panel.width()
+    assert panel.palette_bar.y() == 0  # no gap above
+
+    # Verify paint renders yellow swatch filling inner top-left corner
+    pm = QPixmap(panel.size())
+    pm.fill(Qt.GlobalColor.transparent)
+    panel.render(pm)
+    img = pm.toImage()
+
+    # Inner pixel in first swatch (yellow #fff176)
+    yellow_pixel = img.pixelColor(10, 10)
+    assert yellow_pixel.name().lower() == "#fff176"
+
+    # Outside corner (0,0) is transparent
+    assert img.pixelColor(0, 0).alpha() == 0
+
+    # Test clicking blue swatch (index 4)
+    mock_slot = MagicMock()
+    panel.themeSelected.connect(mock_slot)
+
+    panel.palette_bar._index_at = MagicMock(return_value=4)
+    ev = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        QPointF(147, 15),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    panel.palette_bar.mousePressEvent(ev)
+
+    mock_slot.assert_called_once_with("blue")
+    panel.close()
+
+
 def test_sticky_note_forwards_notes_list_requested(qapp):
     """StickyNote must forward notesListRequested from OptionsPanel."""
     note = StickyNote(note_id="test-note-list-id", content="Test note")
