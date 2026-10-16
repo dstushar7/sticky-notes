@@ -290,6 +290,7 @@ class TrayManager:
         note.show()
         note.raise_()
         note.activateWindow()
+        note.set_focused(True)
 
     def _create_new_note(
         self,

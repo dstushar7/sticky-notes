@@ -14,6 +14,7 @@ THEMES = {
 }
 DEFAULT_THEME = "yellow"
 TITLE_BAR_HEIGHT = 38           # taller bar gives the floating chip buttons room to cast a shadow
+TITLE_BAR_UNFOCUSED_HEIGHT = 6  # thin accent stripe visible when note is unfocused
 SHADOW_GUTTER = 12          # transparent margin for the drop shadow
 RESIZE_ZONE = 16            # >= SHADOW_GUTTER so resize grip reaches the visible note edge
 MIN_NOTE_WIDTH = 160

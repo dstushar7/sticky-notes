@@ -863,6 +863,7 @@ class TitleBar(QWidget):
         # without waiting for the next apply_colors call.
         self._btn_color = "#1a1a1a"
         self._is_collapsed_style = False
+        self._is_focused = True
         self._setup_ui()
 
     def _setup_ui(self):
@@ -985,6 +986,39 @@ class TitleBar(QWidget):
             return
         self._is_collapsed_style = collapsed
         self._rebuild_bar_style()
+        if collapsed:
+            self.setFixedHeight(config.TITLE_BAR_HEIGHT)
+            self.layout().setContentsMargins(4, 0, 4, 0)
+            self.add_btn.show()
+            self.drag_handle.show()
+            self.pin_btn.show()
+            self.opts_btn.show()
+            self.close_btn.show()
+        else:
+            self.set_focused(self._is_focused)
+
+    def set_focused(self, focused: bool):
+        """Show full title bar when focused; collapse to a thin colored strip
+        when unfocused (matching Microsoft Sticky Notes behavior)."""
+        self._is_focused = focused
+        if self._is_collapsed_style:
+            return
+        if focused:
+            self.setFixedHeight(config.TITLE_BAR_HEIGHT)
+            self.layout().setContentsMargins(4, 0, 4, 0)
+            self.add_btn.show()
+            self.drag_handle.show()
+            self.pin_btn.show()
+            self.opts_btn.show()
+            self.close_btn.show()
+        else:
+            self.add_btn.hide()
+            self.drag_handle.hide()
+            self.pin_btn.hide()
+            self.opts_btn.hide()
+            self.close_btn.hide()
+            self.layout().setContentsMargins(0, 0, 0, 0)
+            self.setFixedHeight(config.TITLE_BAR_UNFOCUSED_HEIGHT)
 
     def _rebuild_bar_style(self):
         r = config.CORNER_RADIUS_PX
@@ -1171,6 +1205,8 @@ class StickyNote(QWidget):
         self._is_pinned = bool(pinned)
         self._hide_from_dock = bool(hide_from_dock)
         self._is_collapsed = False
+        self._is_focused = (note_id is None)
+        self._activated_by_click = (note_id is None)
         self._pre_collapse_height = 250
         self._options_panel = None
         self._anim_group = None
@@ -1309,6 +1345,8 @@ class StickyNote(QWidget):
 
         if collapsed:
             QTimer.singleShot(0, self._collapse_immediately)
+        elif not self._is_focused:
+            self._set_bars_focused(False)
 
     def showEvent(self, event):
         """Re-assert always-on-top once the window is actually mapped.
@@ -1345,6 +1383,36 @@ class StickyNote(QWidget):
                 QTimer.singleShot(
                     0, lambda: self.setWindowState(self.windowState() & ~bad)
                 )
+        elif event.type() == QEvent.Type.ActivationChange:
+            if self.isActiveWindow():
+                if self._activated_by_click:
+                    self._set_bars_focused(True)
+            else:
+                if self._options_panel is None or not self._options_panel.isVisible():
+                    self._set_bars_focused(False)
+
+    def is_focused(self) -> bool:
+        """Whether this note is currently focused (with toolbars visible)."""
+        return self._is_focused
+
+    def set_focused(self, focused: bool):
+        """Show or hide the toolbars according to focus state."""
+        if focused:
+            self._activated_by_click = True
+        self._set_bars_focused(focused)
+
+    def _set_bars_focused(self, focused: bool):
+        """Update top and bottom bar visibility based on note focus.
+        When unfocused: top bar collapses to a thin colored stripe and bottom
+        bar is hidden. When focused: full top and bottom bars appear."""
+        self._is_focused = focused
+        if self._is_collapsed:
+            return
+        self.title_bar.set_focused(focused)
+        if focused:
+            self.format_bar.show()
+        else:
+            self.format_bar.hide()
 
     def set_hidden_from_dock(self, hidden: bool):
         """Apply the app-global dock preference to this note. Called by
@@ -1609,6 +1677,8 @@ class StickyNote(QWidget):
         # new reference).
         if self._options_panel is panel:
             self._options_panel = None
+        if not self.isActiveWindow():
+            self._set_bars_focused(False)
 
     def _change_theme(self, theme_name: str):
         self._theme_name = theme_name
@@ -1730,7 +1800,12 @@ class StickyNote(QWidget):
         self._apply_expanded_shadow()
 
         self.text_edit.show()
-        self.format_bar.show()
+        if self._is_focused:
+            self.format_bar.show()
+            self.title_bar.set_focused(True)
+        else:
+            self.format_bar.hide()
+            self.title_bar.set_focused(False)
 
         # Same lock-on-every-frame animation as _collapse. On the way up min
         # briefly leads max within a frame; Qt sizes to min, as it always has.
@@ -2072,8 +2147,8 @@ class StickyNote(QWidget):
         return True
 
     def _try_start_drag(self, gpos: QPoint, obj) -> bool:
-        """If pressed on a DragHandle, start a drag and return True."""
-        if not isinstance(obj, DragHandle):
+        """If pressed on a DragHandle or the title bar, start a drag and return True."""
+        if not (isinstance(obj, DragHandle) or obj is self.title_bar):
             return False
         # A drag is how the note reaches a screen edge, so it must never start
         # unlocked — even if a resize finished a moment ago.
@@ -2118,12 +2193,23 @@ class StickyNote(QWidget):
 
     def eventFilter(self, obj, event):
         t = event.type()
-        if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-            gpos = event.globalPosition().toPoint()
-            if self._try_start_resize(gpos):
-                return True
-            if self._try_start_drag(gpos, obj):
-                return True
+        if t == QEvent.Type.MouseButtonPress:
+            self._activated_by_click = True
+            was_unfocused = not self._is_focused
+            if was_unfocused:
+                self._set_bars_focused(True)
+                if obj is self.text_edit or (hasattr(self.text_edit, "viewport") and obj is self.text_edit.viewport()):
+                    gpos = event.globalPosition().toPoint()
+                    vpos = self.text_edit.viewport().mapFromGlobal(gpos)
+                    cur = self.text_edit.cursorForPosition(vpos)
+                    self.text_edit.setTextCursor(cur)
+                    self.text_edit.setFocus()
+            if event.button() == Qt.MouseButton.LeftButton:
+                gpos = event.globalPosition().toPoint()
+                if self._try_start_resize(gpos):
+                    return True
+                if self._try_start_drag(gpos, obj):
+                    return True
         elif t == QEvent.Type.MouseMove:
             if self._handle_mouse_move(event.globalPosition().toPoint()):
                 return True
@@ -2137,6 +2223,9 @@ class StickyNote(QWidget):
     # not covered by any child, so events land here directly.
 
     def mousePressEvent(self, event):
+        self._activated_by_click = True
+        if not self._is_focused:
+            self._set_bars_focused(True)
         if event.button() == Qt.MouseButton.LeftButton:
             if self._try_start_resize(event.globalPosition().toPoint()):
                 event.accept()
