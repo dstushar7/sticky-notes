@@ -24,6 +24,7 @@ from . import utils
 from . import autostart
 from . import xwm
 from . import sharing
+from . import storage
 from .widgets import FloatingButton
 from .richtext import sanitized_fragment, style_for_indent
 
@@ -2182,19 +2183,16 @@ class StickyNote(QWidget):
             return
         if not self._is_dirty and not force:
             return
-        settings = QSettings(config.ORG_NAME, config.APP_NAME)
-        settings.beginGroup("notes")
-        settings.setValue(f"{self.note_id}/content",     self.text_edit.toHtml())
-        # Use Qt's encoded geometry — this is the path Wayland compositors
-        # honor at window mapping. Manual x/y/w/h via move() doesn't work
-        # because Wayland forbids apps from positioning themselves.
-        settings.setValue(f"{self.note_id}/geometry",    self.saveGeometry())
-        settings.setValue(f"{self.note_id}/theme",       self._theme_name)
-        settings.setValue(f"{self.note_id}/collapsed",   self._is_collapsed)
-        settings.setValue(f"{self.note_id}/title",       self._title)
-        settings.setValue(f"{self.note_id}/last_edited", self._last_edited)
-        settings.setValue(f"{self.note_id}/pinned",      self._is_pinned)
-        settings.endGroup()
+        storage.get_db().save_note(
+            note_id=self.note_id,
+            content=self.text_edit.toHtml(),
+            geometry=self.saveGeometry(),
+            theme=self._theme_name,
+            collapsed=self._is_collapsed,
+            title=self._title,
+            last_edited=self._last_edited,
+            pinned=self._is_pinned,
+        )
         self._is_dirty = False
 
     def closeEvent(self, event):

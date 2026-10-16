@@ -216,3 +216,6 @@ stage/
 
 # Claude
 .claude/
+
+# Benchmark artifacts
+benchmark_*.json

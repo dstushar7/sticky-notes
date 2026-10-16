@@ -87,15 +87,13 @@ def test_save_force_flag(qapp):
     note = StickyNote(note_id="test-force-id", content="Persistent")
     assert note._is_dirty is False
 
-    with patch("stickynotes.note_window.QSettings") as mock_settings_cls:
-        mock_settings = MagicMock()
-        mock_settings_cls.return_value = mock_settings
-
+    from stickynotes import storage
+    with patch.object(storage.get_db(), "save_note") as mock_save_note:
         # Normal save while clean: no-op
         note._save(force=False)
-        mock_settings_cls.assert_not_called()
+        mock_save_note.assert_not_called()
 
         # Force save while clean: executes save
         note._save(force=True)
-        mock_settings_cls.assert_called_once()
+        mock_save_note.assert_called_once()
     note.close()

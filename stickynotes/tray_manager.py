@@ -15,6 +15,7 @@ from . import autostart
 from . import utils
 from . import config
 from . import whats_new
+from . import storage
 
 
 # Set once at import time: are we in the failing case (snap autostart firing
@@ -402,6 +403,8 @@ class TrayManager:
             note.activateWindow()
 
     def _handle_note_deletion(self, note_id: str):
+        storage.get_db().delete_note(note_id)
+        # Also clean up legacy QSettings group if present
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
         settings.remove(note_id)
@@ -412,36 +415,19 @@ class TrayManager:
 
     def _load_notes(self):
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
-        settings.beginGroup("notes")
-        for note_id in settings.childGroups():
-            content   = settings.value(f"{note_id}/content", "")
-            theme     = settings.value(f"{note_id}/theme", config.DEFAULT_THEME)
-            collapsed = settings.value(f"{note_id}/collapsed", False, type=bool)
-            # New in this schema. Defaults False, so every existing note loads
-            # exactly as before — nothing becomes pinned on upgrade.
-            pinned    = settings.value(f"{note_id}/pinned", False, type=bool)
+        db = storage.get_db()
+        # Automatically migrate legacy QSettings notes into SQLite if present
+        db.migrate_from_qsettings(settings)
 
-            # New fields in this schema. Both default to None so legacy notes
-            # get the "smart default" behavior in StickyNote.__init__ —
-            # title is auto-derived from existing body content, and
-            # last_edited will be filled in at first save.
-            title       = settings.value(f"{note_id}/title", None)
-            last_edited = settings.value(f"{note_id}/last_edited", None)
-
-            # Prefer the QByteArray-encoded geometry (works on Wayland).
-            # Fall back to (x, y, w, h) ints for notes saved during the
-            # broken intermediate version where we wrote raw coords only.
-            geometry = settings.value(f"{note_id}/geometry")
-            if geometry is None:
-                x = settings.value(f"{note_id}/x")
-                y = settings.value(f"{note_id}/y")
-                w = settings.value(f"{note_id}/w")
-                h = settings.value(f"{note_id}/h")
-                if None not in (x, y, w, h):
-                    geometry = (int(x), int(y), int(w), int(h))
-
+        notes_data = db.get_all_notes()
+        for data in notes_data:
             self._create_new_note(
-                note_id, content, geometry, theme, collapsed, title, last_edited,
-                pinned,
+                note_id=data["id"],
+                content=data["content"],
+                geometry_data=data["geometry"],
+                theme=data["theme"],
+                collapsed=data["collapsed"],
+                title=data["title"],
+                last_edited=data["last_edited"],
+                pinned=data["pinned"],
             )
-        settings.endGroup()
