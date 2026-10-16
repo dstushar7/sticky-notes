@@ -399,4 +399,36 @@ def test_note_closed_immediately_clears_folded_corner(qapp, tmp_path):
         win.close()
 
 
+def test_notes_list_window_no_horizontal_scrollbar(qapp, tmp_path):
+    """Horizontal scrollbar is permanently turned off and never appears even with long text."""
+    db_file = tmp_path / "notes_nohz_test.db"
+    db = storage.NoteDatabase(db_file)
+    with patch("stickynotes.storage.get_db", return_value=db):
+        db.save_note(
+            "n_long",
+            content="<p>Very long line of text that shouldn't cause horizontal scrolling</p>",
+            title="Sleeping Beauty and the Princess With Very Long Title",
+        )
+        for i in range(2, 10):
+            db.save_note(f"n{i}", content=f"<p>Note content {i}</p>", title=f"Note {i}")
+
+        mock_tm = MagicMock()
+        mock_tm.open_notes = {}
+        win = NotesListWindow(tray_manager=mock_tm)
+        win.show()
+        win.refresh_notes()
+
+        assert win.scroll_area.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert not win.scroll_area.horizontalScrollBar().isVisible()
+
+        # Resize to narrow width
+        win.resize(280, 450)
+        qapp.processEvents()
+        assert not win.scroll_area.horizontalScrollBar().isVisible()
+        assert win.scroll_area.horizontalScrollBar().maximum() == 0
+
+        win.close()
+
+
+
 

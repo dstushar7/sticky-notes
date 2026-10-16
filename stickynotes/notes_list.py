@@ -143,12 +143,14 @@ class NoteCardWidget(QFrame):
 
         title_text = self.note_data.get("title") or ""
         self.title_label = QLabel(title_text)
+        self.title_label.setWordWrap(True)
+        self.title_label.setMinimumWidth(0)
         self.title_label.setStyleSheet("color: #ffffff; font-weight: 600; font-size: 11pt; background: transparent;")
         self.title_label.setVisible(bool(title_text and title_text != config.DEFAULT_NOTE_TITLE))
 
         date_text = format_note_date(self.note_data.get("last_edited"))
         self.date_label = QLabel(date_text)
-        # Timestamp color matches the specific note's theme color
+        self.date_label.setMinimumWidth(0)
         self.date_label.setStyleSheet(f"color: {self._accent_color}; font-size: 9pt; font-weight: 500; background: transparent;")
         self.date_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
@@ -164,6 +166,8 @@ class NoteCardWidget(QFrame):
 
         self.body_label = QLabel(body_text)
         self.body_label.setWordWrap(True)
+        self.body_label.setMinimumWidth(0)
+        self.setMinimumWidth(0)
         self.body_label.setStyleSheet("color: #d4d4d4; font-size: 10pt; line-height: 1.3; background: transparent;")
         layout.addWidget(self.body_label)
 
@@ -302,7 +306,7 @@ class NotesListWindow(QWidget):
 
     DEFAULT_WIDTH = 360
     DEFAULT_HEIGHT = 620
-    MIN_WIDTH = 260
+    MIN_WIDTH = 320
     MIN_HEIGHT = 200
 
     def __init__(self, tray_manager=None, parent=None):
@@ -428,6 +432,7 @@ class NotesListWindow(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet("""
             QScrollArea {
                 background-color: transparent;
@@ -449,13 +454,25 @@ class NotesListWindow(QWidget):
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
             }
+            QScrollBar:horizontal {
+                height: 0px;
+                border: none;
+                background: transparent;
+            }
+            QScrollBar::handle:horizontal,
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal {
+                width: 0px;
+                height: 0px;
+            }
         """)
 
         # Container inside scroll area
         self.cards_container = QWidget()
+        self.cards_container.setMinimumWidth(0)
         self.cards_container.setStyleSheet("background-color: transparent;")
         self.cards_layout = QVBoxLayout(self.cards_container)
-        self.cards_layout.setContentsMargins(0, 6, 18, 6)
+        self.cards_layout.setContentsMargins(0, 6, 12, 6)
         self.cards_layout.setSpacing(10)
         self.cards_layout.addStretch(1)
 
