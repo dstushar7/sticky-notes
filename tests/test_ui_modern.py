@@ -129,3 +129,11 @@ def test_pin_icon_angled_states(qapp):
     assert not unpinned.isNull()
     assert not pinned.isNull()
 
+
+def test_format_bar_margins_consistent(qapp):
+    """FormatBar margins must have equal left and bottom gaps."""
+    fb = FormatBar()
+    margins = fb.layout().contentsMargins()
+    assert margins.left() == margins.bottom() == 4
+
+

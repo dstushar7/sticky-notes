@@ -1034,7 +1034,7 @@ class FormatBar(QWidget):
 
     def _setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 2, 8, 2)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
 
         self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: 700;",            "Bold",      "bold")
@@ -1095,8 +1095,8 @@ class FormatBar(QWidget):
         if btn_size == self._btn_size:
             return
         self._btn_size = btn_size
-        # Bar height = button height + small vertical padding
-        self.setFixedHeight(btn_size + 6)
+        # Bar height = button height + equal vertical padding (4px top + 4px bottom)
+        self.setFixedHeight(btn_size + 8)
         for btn in self._buttons():
             btn.setFixedSize(btn_size, btn_size)
         # Re-apply theme so font sizes and the bullet icon pick up the new size

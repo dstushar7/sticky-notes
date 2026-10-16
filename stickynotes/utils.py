@@ -60,50 +60,35 @@ def create_bullet_list_icon(color: str, size: int = 16) -> QIcon:
 
 
 def create_checklist_icon(color: str, size: int = 16) -> QIcon:
-    """A 'checklist' icon calibrated to match toolbar text cap-height."""
+    """A single clean checkbox '☑' icon with a checkmark."""
     pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
 
-    rows = 3
-    margin_x = size * 0.12
-    box = size * 0.19                     # box side length
-    bar_h = max(1.3, size * 0.09)
-    row_spacing = size * 0.26
-    first_y = (size - row_spacing * (rows - 1)) / 2
-    bar_x = margin_x + box + size * 0.14
-    bar_w = size - bar_x - margin_x
+    cx, cy = size / 2.0, size / 2.0
+    box_size = size * 0.72
+    box_rect = QRectF(cx - box_size / 2.0, cy - box_size / 2.0, box_size, box_size)
 
-    stroke = max(1.0, size * 0.065)
-    for i in range(rows):
-        cy = first_y + i * row_spacing
-        box_rect = QRectF(margin_x, cy - box / 2, box, box)
+    stroke = max(1.2, size * 0.08)
+    pen = QPen(qcolor)
+    pen.setWidthF(stroke)
+    pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
 
-        # Outlined box
-        pen = QPen(qcolor)
-        pen.setWidthF(stroke)
-        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
-        p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRect(box_rect)
+    # Outer rounded square box
+    p.drawRoundedRect(box_rect, 2.0, 2.0)
 
-        # Tick in the first box only
-        if i == 0:
-            tick = QPen(qcolor)
-            tick.setWidthF(stroke * 1.15)
-            tick.setCapStyle(Qt.PenCapStyle.RoundCap)
-            tick.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            p.setPen(tick)
-            p.drawPolyline(QPolygonF([
-                QPointF(box_rect.left() + box * 0.20, box_rect.center().y()),
-                QPointF(box_rect.center().x(),        box_rect.bottom() - box * 0.20),
-                QPointF(box_rect.right() - box * 0.15, box_rect.top() + box * 0.18),
-            ]))
-
-        # Bar (rounded ends)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(qcolor)
-        bar_rect = QRectF(bar_x, cy - bar_h / 2, bar_w, bar_h)
-        p.drawRoundedRect(bar_rect, bar_h / 2, bar_h / 2)
+    # Crisp checkmark inside
+    tick = QPen(qcolor)
+    tick.setWidthF(stroke * 1.25)
+    tick.setCapStyle(Qt.PenCapStyle.RoundCap)
+    tick.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(tick)
+    p.drawPolyline(QPolygonF([
+        QPointF(box_rect.left() + box_size * 0.22, box_rect.center().y() + box_size * 0.02),
+        QPointF(box_rect.left() + box_size * 0.44, box_rect.bottom() - box_size * 0.24),
+        QPointF(box_rect.right() - box_size * 0.18, box_rect.top() + box_size * 0.24),
+    ]))
 
     p.end()
     return QIcon(pm)
