@@ -79,6 +79,7 @@ class FloatingButton(QPushButton):
             self.setToolTip(visible)
         if tone in (FloatingButton.Tone.TITLE_BAR, FloatingButton.Tone.CLOSE):
             self.setFixedSize(self.TITLE_BAR_SIZE, self.TITLE_BAR_SIZE)
+        self.apply_theme(self._text_color, self._is_dark_theme)
 
     def _install_shadow(self):
         """Deprecated: shadows removed in favor of clean modern flat aesthetic."""

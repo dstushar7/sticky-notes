@@ -19,7 +19,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
-from PyQt6.QtCore import Qt, QPoint, QSettings, QByteArray, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QPoint, QRectF, QSettings, QByteArray, pyqtSignal, QTimer
 from PyQt6.QtGui import (
     QColor,
     QCursor,
@@ -29,6 +29,9 @@ from PyQt6.QtGui import (
     QKeySequence,
     QShortcut,
     QTextDocument,
+    QPainter,
+    QPainterPath,
+    QPen,
 )
 from PyQt6.QtWidgets import (
     QWidget,
@@ -102,7 +105,7 @@ class NoteCardWidget(QFrame):
         "purple":   "#B680F2",
         "blue":     "#5DC3F3",
         "gray":     "#A8A8A8",
-        "charcoal": "#666666",
+        "charcoal": "#888888",
     }
 
     def __init__(self, note_data: Dict[str, Any], parent=None):
@@ -112,6 +115,7 @@ class NoteCardWidget(QFrame):
         self.setObjectName("noteCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._hovered = False
 
         self._theme_name = note_data.get("theme", config.DEFAULT_THEME)
         self._accent_color = self._THEME_ACCENTS.get(self._theme_name, "#E5C100")
@@ -121,7 +125,7 @@ class NoteCardWidget(QFrame):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setContentsMargins(14, 15, 14, 13)
         layout.setSpacing(6)
 
         # Top row: Title (if available) + Date on right
@@ -131,13 +135,13 @@ class NoteCardWidget(QFrame):
 
         title_text = self.note_data.get("title") or ""
         self.title_label = QLabel(title_text)
-        self.title_label.setStyleSheet("color: #ffffff; font-weight: 600; font-size: 11pt;")
+        self.title_label.setStyleSheet("color: #ffffff; font-weight: 600; font-size: 11pt; background: transparent;")
         self.title_label.setVisible(bool(title_text and title_text != config.DEFAULT_NOTE_TITLE))
 
         date_text = format_note_date(self.note_data.get("last_edited"))
         self.date_label = QLabel(date_text)
-        # Subtle gold/amber accent for dates matching MS Sticky Notes look
-        self.date_label.setStyleSheet("color: #e5b838; font-size: 9pt; font-weight: 500;")
+        # Timestamp color matches the specific note's theme color
+        self.date_label.setStyleSheet(f"color: {self._accent_color}; font-size: 9pt; font-weight: 500; background: transparent;")
         self.date_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         top_row.addWidget(self.title_label, stretch=1)
@@ -152,23 +156,55 @@ class NoteCardWidget(QFrame):
 
         self.body_label = QLabel(body_text)
         self.body_label.setWordWrap(True)
-        self.body_label.setStyleSheet("color: #d4d4d4; font-size: 10pt; line-height: 1.3;")
+        self.body_label.setStyleSheet("color: #d4d4d4; font-size: 10pt; line-height: 1.3; background: transparent;")
         layout.addWidget(self.body_label)
 
     def _apply_style(self):
-        self.setStyleSheet(f"""
-            QFrame#noteCard {{
-                background-color: #2b2b2b;
-                border: 1px solid #363636;
-                border-top: 3px solid {self._accent_color};
-                border-radius: 6px;
-            }}
-            QFrame#noteCard:hover {{
-                background-color: #363636;
-                border: 1px solid #4a4a4a;
-                border-top: 3px solid {self._accent_color};
-            }}
+        self.setStyleSheet("""
+            QFrame#noteCard {
+                background-color: transparent;
+                border: none;
+            }
         """)
+
+    def paintEvent(self, event):
+        """Paint rounded card with note color filling the top edge and inner corners."""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        radius = 6.0
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+
+        card_path = QPainterPath()
+        card_path.addRoundedRect(rect, radius, radius)
+
+        # 1. Base card background
+        bg_color = QColor("#363636" if self._hovered else "#2b2b2b")
+        p.fillPath(card_path, bg_color)
+
+        # 2. Solid top accent stripe (fills top edge, hugging and rounding the inner corners)
+        stripe_height = 5.0
+        p.save()
+        p.setClipPath(card_path)
+        stripe_rect = QRectF(rect.x(), rect.y(), rect.width(), stripe_height)
+        p.fillRect(stripe_rect, QColor(self._accent_color))
+        p.restore()
+
+        # 3. Outer border
+        border_color = QColor("#4a4a4a" if self._hovered else "#383838")
+        p.setPen(QPen(border_color, 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect, radius, radius)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self._hovered = False
+        self.update()
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -292,6 +328,13 @@ class NotesListWindow(QWidget):
         self.close_btn.setToolTip("Close (Esc)")
         self.close_btn.clicked.connect(self.close)
         top_bar.addWidget(self.close_btn)
+
+        # Apply flat modern borderless style matching note window
+        FloatingButton.apply_theme_to_all(
+            (self.add_btn, self.settings_btn, self.close_btn),
+            text_color="#ffffff",
+            is_dark_theme=True,
+        )
 
         container_layout.addLayout(top_bar)
 

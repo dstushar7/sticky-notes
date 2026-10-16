@@ -1,6 +1,6 @@
 # stickynotes/utils.py
 
-from PyQt6.QtGui import QPainter, QColor, QPixmap, QIcon, QPen, QPolygonF
+from PyQt6.QtGui import QPainter, QColor, QPixmap, QIcon, QPen, QPolygonF, QPainterPath
 from PyQt6.QtCore import Qt, QPointF, QRectF
 from . import config
 
@@ -266,31 +266,49 @@ def create_search_icon(color: str, size: int = 24) -> QIcon:
 
 
 def create_gear_icon(color: str, size: int = 24) -> QIcon:
-    """Crisp settings gear icon for the notes list header."""
+    """Expressive, modern settings gear wheel with sculpted cogs and center hub."""
     import math
     pm, p = _make_crisp_pixmap(size)
-    pen = QPen(QColor(color))
-    pen.setWidthF(max(1.2, size * 0.08))
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    p.setPen(pen)
-
     cx, cy = size / 2.0, size / 2.0
-    outer_r = size * 0.38
-    inner_r = size * 0.26
-    cogs = 6
-    for i in range(cogs):
-        angle = i * (2 * math.pi / cogs)
-        x1 = cx + math.cos(angle) * inner_r
-        y1 = cy + math.sin(angle) * inner_r
-        x2 = cx + math.cos(angle) * outer_r
-        y2 = cy + math.sin(angle) * outer_r
-        p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
-    ring_pen = QPen(QColor(color))
-    ring_pen.setWidthF(max(1.4, size * 0.10))
-    p.setPen(ring_pen)
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    p.drawEllipse(QPointF(cx, cy), size * 0.22, size * 0.22)
+    path = QPainterPath()
+    teeth = 6
+    outer_r = size * 0.42
+    root_r = size * 0.29
+    hole_r = size * 0.14
+
+    tip_half = math.radians(360 / teeth * 0.16)
+    base_half = math.radians(360 / teeth * 0.26)
+
+    for i in range(teeth):
+        ca = i * (2 * math.pi / teeth)
+        a1 = ca - base_half
+        a2 = ca - tip_half
+        a3 = ca + tip_half
+        a4 = ca + base_half
+
+        pt1 = QPointF(cx + math.cos(a1) * root_r, cy + math.sin(a1) * root_r)
+        pt2 = QPointF(cx + math.cos(a2) * outer_r, cy + math.sin(a2) * outer_r)
+        pt3 = QPointF(cx + math.cos(a3) * outer_r, cy + math.sin(a3) * outer_r)
+        pt4 = QPointF(cx + math.cos(a4) * root_r, cy + math.sin(a4) * root_r)
+
+        if i == 0:
+            path.moveTo(pt1)
+        else:
+            path.lineTo(pt1)
+        path.lineTo(pt2)
+        path.lineTo(pt3)
+        path.lineTo(pt4)
+
+    path.closeSubpath()
+
+    hole = QPainterPath()
+    hole.addEllipse(QPointF(cx, cy), hole_r, hole_r)
+    gear_shape = path.subtracted(hole)
+
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    p.drawPath(gear_shape)
     p.end()
     return QIcon(pm)
 

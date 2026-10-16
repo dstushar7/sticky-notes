@@ -81,7 +81,8 @@ def test_get_plain_snippet():
 
 
 def test_note_card_widget_ui_and_accent(qapp):
-    """NoteCardWidget renders title, date, body preview and applies top accent color."""
+    """NoteCardWidget renders title, date, body preview, matches date color, and paints top accent."""
+    from PyQt6.QtGui import QPixmap
     data = {
         "id": "card-1",
         "title": "Shopping List",
@@ -90,10 +91,33 @@ def test_note_card_widget_ui_and_accent(qapp):
         "last_edited": "2026-10-02T10:00:00Z",
     }
     card = NoteCardWidget(data)
+    card.resize(300, 100)
     assert card.title_label.text() == "Shopping List"
     assert "Milk, Bread, Coffee" in card.body_label.text()
     assert card._accent_color == NoteCardWidget._THEME_ACCENTS["yellow"]
-    assert f"border-top: 3px solid {card._accent_color}" in card.styleSheet()
+    # Timestamp color matches note accent color
+    assert card._accent_color in card.date_label.styleSheet()
+
+    # Verify paintEvent fills top accent edge
+    pm = QPixmap(300, 100)
+    card.render(pm)
+    img = pm.toImage()
+    assert img.pixelColor(150, 2).name().lower() == NoteCardWidget._THEME_ACCENTS["yellow"].lower()
+
+    # Verify purple card timestamp matches purple accent
+    purple_card = NoteCardWidget({"id": "c2", "theme": "purple", "last_edited": "2026-10-02T10:00:00Z"})
+    assert purple_card._accent_color == NoteCardWidget._THEME_ACCENTS["purple"]
+    assert purple_card._accent_color in purple_card.date_label.styleSheet()
+
+
+def test_notes_list_window_buttons_flat_modern_style(qapp):
+    """NotesListWindow action buttons (+, ⚙, ✕) must have flat transparent idle style with no border."""
+    win = NotesListWindow()
+    for btn in (win.add_btn, win.settings_btn, win.close_btn):
+        qss = btn.styleSheet()
+        assert "background-color: transparent" in qss
+        assert "border: none" in qss
+    win.close()
 
 
 def test_note_card_click_emits_open_requested(qapp):
