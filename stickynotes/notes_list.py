@@ -124,6 +124,13 @@ class NoteCardWidget(QFrame):
         self._setup_ui()
         self._apply_style()
 
+    def set_open(self, is_open: bool):
+        """Update open status and repaint dog-ear folded corner indicator."""
+        if self.is_open != is_open:
+            self.is_open = is_open
+            self.note_data["is_open"] = is_open
+            self.update()
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 15, 14, 13)
@@ -591,7 +598,14 @@ class NotesListWindow(QWidget):
         self._is_dragging = False
         super().mouseReleaseEvent(event)
 
-    def refresh_notes(self):
+    def update_note_open_state(self, note_id: str, is_open: bool):
+        """Immediately update the visual dog-ear folded corner indicator on the card."""
+        for card in self._cards:
+            if card.note_id == note_id:
+                card.set_open(is_open)
+                break
+
+    def refresh_notes(self, closed_note_id: str = None):
         """Fetch all notes from SQLite, sort by last_edited, and render cards."""
         db = storage.get_db()
         notes_data = db.get_all_notes()
@@ -600,13 +614,16 @@ class NotesListWindow(QWidget):
         open_notes_map = self.tray_manager.open_notes if (self.tray_manager and hasattr(self.tray_manager, "open_notes")) else {}
         for item in notes_data:
             nid = item["id"]
-            if nid in open_notes_map:
+            if nid == closed_note_id:
+                item["is_open"] = False
+            elif nid in open_notes_map:
                 open_note = open_notes_map[nid]
                 item["title"] = open_note.title
                 item["content"] = open_note.text_edit.toHtml()
                 item["theme"] = open_note._theme_name
                 item["last_edited"] = open_note.last_edited
-                item["is_open"] = bool(open_note is not None and open_note.isVisible())
+                is_closing = getattr(open_note, "_is_closing", False) is True
+                item["is_open"] = bool(open_note is not None and open_note.isVisible() and not is_closing)
             else:
                 item["is_open"] = bool(item.get("is_open", False))
 
@@ -662,6 +679,7 @@ class NotesListWindow(QWidget):
             self.tray_manager._show_settings()
 
     def _open_note(self, note_id: str):
+        self.update_note_open_state(note_id, True)
         if self.tray_manager and hasattr(self.tray_manager, "_focus_note"):
             self.tray_manager._focus_note(note_id)
             QTimer.singleShot(50, self.refresh_notes)

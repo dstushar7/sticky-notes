@@ -1305,6 +1305,7 @@ class StickyNote(QWidget):
     notesListRequested = pyqtSignal()
     noteSaved = pyqtSignal(str)               # emits note_id
     noteClosed = pyqtSignal(str)              # emits note_id
+    noteOpened = pyqtSignal(str)              # emits note_id
     titleChanged = pyqtSignal(str, str)        # emits (note_id, new_title)
     receiveRequested = pyqtSignal(str)         # emits note_id (placement anchor)
 
@@ -1487,6 +1488,7 @@ class StickyNote(QWidget):
         is idempotent, so "Show All Notes" re-applying it costs nothing.
         """
         super().showEvent(event)
+        self.noteOpened.emit(self.note_id)
         if self._is_pinned:
             QTimer.singleShot(0, lambda: xwm.set_always_on_top(self, True))
         if self._hide_from_dock:
@@ -2445,10 +2447,13 @@ class StickyNote(QWidget):
         self.noteSaved.emit(self.note_id)
 
     def closeEvent(self, event):
+        self._is_closing = True
+        self.hide()
         if not self._is_being_deleted:
             self._save(force=True)
             self.noteClosed.emit(self.note_id)
         super().closeEvent(event)
+        self._is_closing = False
 
 
 # ---------------------------------------------------------------------------

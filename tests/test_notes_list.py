@@ -332,3 +332,71 @@ def test_notes_list_window_adaptive_dimensions(qapp, tmp_path):
         win.close()
 
 
+def test_note_closed_immediately_clears_folded_corner(qapp, tmp_path):
+    """Closing any note (or all notes) immediately clears its card's folded corner indicator."""
+    from stickynotes.note_window import StickyNote
+    from stickynotes.tray_manager import TrayManager
+
+    db_file = tmp_path / "notes_close_test.db"
+    db = storage.NoteDatabase(db_file)
+    with patch("stickynotes.storage.get_db", return_value=db):
+        db.save_note("note-alpha", content="<p>Alpha Note</p>", title="Alpha Note")
+        db.save_note("note-beta", content="<p>Beta Note</p>", title="Beta Note")
+
+        tm = MagicMock(spec=TrayManager)
+        tm.open_notes = {}
+        tm._notes_list_window = None
+
+        win = NotesListWindow(tray_manager=tm)
+        tm._notes_list_window = win
+        win.show()
+
+        # Wire the TrayManager callback methods to the real implementation
+        tm._on_note_closed = lambda nid: (
+            win.update_note_open_state(nid, False),
+            win.refresh_notes(closed_note_id=nid),
+        )
+        tm._on_note_opened = lambda nid: (
+            win.update_note_open_state(nid, True),
+        )
+
+        # Create two real StickyNotes
+        note1 = StickyNote(note_id="note-alpha", content="<p>Alpha Note</p>", title="Alpha Note")
+        note2 = StickyNote(note_id="note-beta", content="<p>Beta Note</p>", title="Beta Note")
+
+        note1.noteClosed.connect(tm._on_note_closed)
+        note2.noteClosed.connect(tm._on_note_closed)
+        note1.noteOpened.connect(tm._on_note_opened)
+        note2.noteOpened.connect(tm._on_note_opened)
+
+        tm.open_notes["note-alpha"] = note1
+        tm.open_notes["note-beta"] = note2
+
+        note1.show()
+        note2.show()
+
+        win.refresh_notes()
+        card_map = {c.note_id: c for c in win._cards}
+        assert card_map["note-alpha"].is_open is True
+        assert card_map["note-beta"].is_open is True
+
+        # 1. Close one note: note1
+        note1.close()
+
+        # note1's card must immediately update to is_open = False without needing any click
+        card_map_1 = {c.note_id: c for c in win._cards}
+        assert card_map_1["note-alpha"].is_open is False
+        assert card_map_1["note-beta"].is_open is True
+
+        # 2. Close the second (and last remaining) note: note2
+        note2.close()
+
+        # Even after closing all notes, the last closed note must immediately have is_open = False
+        card_map_2 = {c.note_id: c for c in win._cards}
+        assert card_map_2["note-alpha"].is_open is False
+        assert card_map_2["note-beta"].is_open is False
+
+        win.close()
+
+
+
