@@ -327,6 +327,11 @@ class TrayManager:
         if self._notes_list_window is not None and self._notes_list_window.isVisible():
             self._notes_list_window.refresh_notes()
 
+    def _on_note_closed(self, note_id: str):
+        """Callback when a note window is closed — updates Notes List card indicator."""
+        if self._notes_list_window is not None and self._notes_list_window.isVisible():
+            self._notes_list_window.refresh_notes()
+
     def _create_new_note(
         self,
         note_id=None,
@@ -347,6 +352,7 @@ class TrayManager:
         note.newNoteRequested.connect(self._new_note_from_signal)
         note.notesListRequested.connect(self._show_notes_list)
         note.noteSaved.connect(self._on_note_saved)
+        note.noteClosed.connect(self._on_note_closed)
         note.receiveRequested.connect(self._show_receive_dialog)
         note.show()
         self.open_notes[note.note_id] = note

@@ -182,3 +182,66 @@ def test_notes_list_window_add_and_settings_buttons(qapp):
     win.settings_btn.click()
     mock_tm._show_settings.assert_called_once()
     win.close()
+
+
+def test_note_card_folded_corner_when_open(qapp):
+    """NoteCardWidget renders a dog-ear folded corner at bottom-right if note is open."""
+    from PyQt6.QtGui import QPixmap
+    closed_card = NoteCardWidget({"id": "closed", "title": "Closed", "is_open": False})
+    open_card = NoteCardWidget({"id": "open", "title": "Open", "is_open": True})
+
+    assert not closed_card.is_open
+    assert open_card.is_open
+
+    closed_card.resize(200, 100)
+    open_card.resize(200, 100)
+
+    pm_closed = QPixmap(200, 100)
+    pm_open = QPixmap(200, 100)
+
+    closed_card.render(pm_closed)
+    open_card.render(pm_open)
+
+    # Pixel in the dog-ear area near bottom-right (e.g., x=192, y=92)
+    # On the open card with fold_size=14, this area is the folded paper flap
+    img_closed = pm_closed.toImage()
+    img_open = pm_open.toImage()
+
+    color_closed = img_closed.pixelColor(192, 92)
+    color_open = img_open.pixelColor(192, 92)
+    # The flap has a distinct lighter paper color compared to the standard card background
+    assert color_open != color_closed
+
+
+def test_notes_list_window_syncs_is_open_state(qapp, tmp_path):
+    """NotesListWindow marks card as open when note window is active and visible."""
+    db_file = tmp_path / "notes_test.db"
+    db = storage.NoteDatabase(db_file)
+    with patch("stickynotes.storage.get_db", return_value=db):
+        db.save_note("open-note-1", content="<p>I am open</p>", title="Open Note")
+        db.save_note("closed-note-2", content="<p>I am closed</p>", title="Closed Note")
+
+        mock_open_note = MagicMock()
+        mock_open_note.title = "Open Note"
+        mock_open_note.text_edit.toHtml.return_value = "<p>I am open</p>"
+        mock_open_note._theme_name = "yellow"
+        mock_open_note.last_edited = "2026-10-16T12:00:00Z"
+        mock_open_note.isVisible.return_value = True
+
+        mock_tm = MagicMock()
+        mock_tm.open_notes = {"open-note-1": mock_open_note}
+
+        win = NotesListWindow(tray_manager=mock_tm)
+        win.refresh_notes()
+
+        card_map = {c.note_id: c for c in win._cards}
+        assert card_map["open-note-1"].is_open is True
+        assert card_map["closed-note-2"].is_open is False
+
+        # When the note closes (isVisible returns False)
+        mock_open_note.isVisible.return_value = False
+        win.refresh_notes()
+        card_map_after = {c.note_id: c for c in win._cards}
+        assert card_map_after["open-note-1"].is_open is False
+        win.close()
+

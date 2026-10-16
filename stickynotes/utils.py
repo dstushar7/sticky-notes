@@ -313,6 +313,111 @@ def create_gear_icon(color: str, size: int = 24) -> QIcon:
     return QIcon(pm)
 
 
+def create_share_icon(color: str, size: int = 16) -> QIcon:
+    """Crisp vector Share/Export icon: box with arrow pointing up-right."""
+    pm, p = _make_crisp_pixmap(size)
+    qcolor = QColor(color)
+    stroke = max(1.3, size * 0.085)
+    pen = QPen(qcolor)
+    pen.setWidthF(stroke)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+    # Box with open top-right corner
+    x1 = size * 0.20
+    x2 = size * 0.80
+    y1 = size * 0.22
+    y2 = size * 0.82
+    split_x = size * 0.52
+    split_y = size * 0.50
+
+    box_path = QPainterPath()
+    box_path.moveTo(split_x, y1)
+    box_path.lineTo(x1, y1)
+    box_path.lineTo(x1, y2)
+    box_path.lineTo(x2, y2)
+    box_path.lineTo(x2, split_y)
+    p.drawPath(box_path)
+
+    # Arrow pointing up-right
+    arrow_tip = QPointF(size * 0.82, size * 0.20)
+    arrow_start = QPointF(size * 0.44, size * 0.58)
+    p.drawLine(arrow_start, arrow_tip)
+
+    # Arrow head wings
+    wing_len = size * 0.26
+    p.drawLine(arrow_tip, QPointF(arrow_tip.x() - wing_len, arrow_tip.y()))
+    p.drawLine(arrow_tip, QPointF(arrow_tip.x(), arrow_tip.y() + wing_len))
+
+    p.end()
+    return QIcon(pm)
+
+
+def create_receive_icon(color: str, size: int = 16) -> QIcon:
+    """Crisp vector Receive/Import icon: tray with downward arrow."""
+    pm, p = _make_crisp_pixmap(size)
+    qcolor = QColor(color)
+    stroke = max(1.3, size * 0.085)
+    pen = QPen(qcolor)
+    pen.setWidthF(stroke)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+    # Tray at bottom
+    x1 = size * 0.18
+    x2 = size * 0.82
+    y_tray_top = size * 0.60
+    y_tray_bot = size * 0.84
+
+    tray_path = QPainterPath()
+    tray_path.moveTo(x1, y_tray_top)
+    tray_path.lineTo(x1, y_tray_bot)
+    tray_path.lineTo(x2, y_tray_bot)
+    tray_path.lineTo(x2, y_tray_top)
+    p.drawPath(tray_path)
+
+    # Downward arrow
+    cx = size / 2.0
+    arrow_top = size * 0.16
+    arrow_tip_y = size * 0.58
+    p.drawLine(QPointF(cx, arrow_top), QPointF(cx, arrow_tip_y))
+
+    # Arrow head pointing down
+    wing_dx = size * 0.20
+    wing_dy = size * 0.18
+    p.drawLine(QPointF(cx - wing_dx, arrow_tip_y - wing_dy), QPointF(cx, arrow_tip_y))
+    p.drawLine(QPointF(cx + wing_dx, arrow_tip_y - wing_dy), QPointF(cx, arrow_tip_y))
+
+    p.end()
+    return QIcon(pm)
+
+
+def create_check_icon(color: str, size: int = 16) -> QIcon:
+    """Crisp vector Checkmark icon."""
+    pm, p = _make_crisp_pixmap(size)
+    qcolor = QColor(color)
+    stroke = max(1.6, size * 0.12)
+    pen = QPen(qcolor)
+    pen.setWidthF(stroke)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+    path = QPainterPath()
+    path.moveTo(size * 0.22, size * 0.52)
+    path.lineTo(size * 0.42, size * 0.74)
+    path.lineTo(size * 0.78, size * 0.28)
+    p.drawPath(path)
+
+    p.end()
+    return QIcon(pm)
+
+
 def tooltip_stylesheet() -> str:
     """App-wide QToolTip styling, built from the config tokens.
 

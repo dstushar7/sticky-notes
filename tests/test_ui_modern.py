@@ -82,6 +82,9 @@ def test_crisp_icon_generators(qapp):
         utils.create_menu_lines_icon,
         utils.create_search_icon,
         utils.create_gear_icon,
+        utils.create_share_icon,
+        utils.create_receive_icon,
+        utils.create_check_icon,
     ):
         icon = fn("#1a1a1a", 24)
         assert isinstance(icon, QIcon)
@@ -94,6 +97,29 @@ def test_crisp_icon_generators(qapp):
     pin_icon = utils.create_pin_icon("#1a1a1a", 24, filled=True)
     assert isinstance(pin_icon, QIcon)
     assert not pin_icon.isNull()
+
+
+def test_options_panel_share_receive_icons_and_feedback(qapp):
+    """OptionsPanel share and receive buttons should use vector icons and update on copied."""
+    from stickynotes.note_window import OptionsPanel
+    panel = OptionsPanel(current_theme="yellow")
+    assert not panel._share_btn.icon().isNull()
+    assert panel._share_btn.text() == "Share"
+
+    # Find the receive button in the panel
+    receive_btn = None
+    for child in panel.findChildren(panel._share_btn.__class__):
+        if child.text() == "Receive":
+            receive_btn = child
+            break
+    assert receive_btn is not None
+    assert not receive_btn.icon().isNull()
+
+    # Trigger copied feedback
+    panel.show_share_copied()
+    assert panel._share_btn.text() == "Copied"
+    assert not panel._share_btn.icon().isNull()
+    panel.close()
 
 
 def test_format_bar_strike_button_label(qapp):

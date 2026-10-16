@@ -495,14 +495,19 @@ class OptionsPanel(QWidget):
         # Share / Receive row
         share_row = QHBoxLayout()
         share_row.setSpacing(6)
+        self._share_icon = utils.create_share_icon("#ffffff", 16)
         self._share_btn = self._action_button(
-            "↗  Share",
+            "Share",
             "Copy this note as text you can send to anyone.\n"
             "Anyone with the text can read the note.",
+            icon=self._share_icon,
         )
         self._share_btn.clicked.connect(self.shareRequested.emit)
+        self._receive_icon = utils.create_receive_icon("#ffffff", 16)
         receive_btn = self._action_button(
-            "↙  Receive", "Add a note someone shared with you"
+            "Receive",
+            "Add a note someone shared with you",
+            icon=self._receive_icon,
         )
         receive_btn.clicked.connect(self.receiveRequested.emit)
         share_row.addWidget(self._share_btn)
@@ -541,8 +546,11 @@ class OptionsPanel(QWidget):
         }
     """
 
-    def _action_button(self, label: str, tooltip: str) -> QPushButton:
+    def _action_button(self, label: str, tooltip: str, icon=None) -> QPushButton:
         btn = QPushButton(label, self)
+        if icon is not None:
+            btn.setIcon(icon)
+            btn.setIconSize(QSize(16, 16))
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setToolTip(tooltip)
@@ -557,7 +565,8 @@ class OptionsPanel(QWidget):
 
     def show_share_copied(self):
         """Confirm the copy in place, then get out of the way."""
-        self._share_btn.setText("✓  Copied")
+        self._share_btn.setIcon(utils.create_check_icon("#4caf50", 16))
+        self._share_btn.setText("Copied")
         self._share_btn.setStyleSheet(self._ACTION_DONE_CSS)
         self._share_btn.setEnabled(False)
         QTimer.singleShot(config.SHARE_COPIED_FEEDBACK_MS, self.close)
@@ -1197,6 +1206,7 @@ class StickyNote(QWidget):
     newNoteRequested = pyqtSignal(str)        # emits theme_name
     notesListRequested = pyqtSignal()
     noteSaved = pyqtSignal(str)               # emits note_id
+    noteClosed = pyqtSignal(str)              # emits note_id
     titleChanged = pyqtSignal(str, str)        # emits (note_id, new_title)
     receiveRequested = pyqtSignal(str)         # emits note_id (placement anchor)
 
@@ -2339,6 +2349,7 @@ class StickyNote(QWidget):
     def closeEvent(self, event):
         if not self._is_being_deleted:
             self._save(force=True)
+            self.noteClosed.emit(self.note_id)
         super().closeEvent(event)
 
 

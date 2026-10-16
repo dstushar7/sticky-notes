@@ -19,7 +19,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
-from PyQt6.QtCore import Qt, QPoint, QRectF, QSettings, QByteArray, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSettings, QByteArray, pyqtSignal, QTimer
 from PyQt6.QtGui import (
     QColor,
     QCursor,
@@ -112,6 +112,7 @@ class NoteCardWidget(QFrame):
         super().__init__(parent)
         self.note_data = note_data
         self.note_id = note_data["id"]
+        self.is_open = bool(note_data.get("is_open", False))
         self.setObjectName("noteCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
@@ -168,15 +169,34 @@ class NoteCardWidget(QFrame):
         """)
 
     def paintEvent(self, event):
-        """Paint rounded card with note color filling the top edge and inner corners."""
+        """Paint rounded card with note color filling the top edge and inner corners,
+        and a folded bottom-right corner if the note is currently open."""
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         radius = 6.0
+        fold_size = 14.0 if self.is_open else 0.0
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        x1, y1 = rect.left(), rect.top()
+        x2, y2 = rect.right(), rect.bottom()
 
         card_path = QPainterPath()
-        card_path.addRoundedRect(rect, radius, radius)
+        card_path.moveTo(x1 + radius, y1)
+        card_path.lineTo(x2 - radius, y1)
+        card_path.arcTo(x2 - 2 * radius, y1, 2 * radius, 2 * radius, 90, -90)
+
+        if self.is_open:
+            card_path.lineTo(x2, y2 - fold_size)
+            card_path.lineTo(x2 - fold_size, y2)
+        else:
+            card_path.lineTo(x2, y2 - radius)
+            card_path.arcTo(x2 - 2 * radius, y2 - 2 * radius, 2 * radius, 2 * radius, 0, -90)
+
+        card_path.lineTo(x1 + radius, y2)
+        card_path.arcTo(x1, y2 - 2 * radius, 2 * radius, 2 * radius, 270, -90)
+        card_path.lineTo(x1, y1 + radius)
+        card_path.arcTo(x1, y1, 2 * radius, 2 * radius, 180, -90)
+        card_path.closeSubpath()
 
         # 1. Base card background
         bg_color = QColor("#363636" if self._hovered else "#2b2b2b")
@@ -194,7 +214,28 @@ class NoteCardWidget(QFrame):
         border_color = QColor("#4a4a4a" if self._hovered else "#383838")
         p.setPen(QPen(border_color, 1))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(rect, radius, radius)
+        p.drawPath(card_path)
+
+        # 4. Dog-ear folded corner flap if open
+        if self.is_open:
+            flap_path = QPainterPath()
+            flap_path.moveTo(x2 - fold_size, y2)
+            flap_path.lineTo(x2 - fold_size, y2 - fold_size)
+            flap_path.lineTo(x2, y2 - fold_size)
+            flap_path.closeSubpath()
+
+            # Paper back color (lighter grey)
+            flap_color = QColor("#5c5c5c" if self._hovered else "#525252")
+            p.fillPath(flap_path, flap_color)
+
+            # Crease line (darker diagonal fold)
+            p.setPen(QPen(QColor("#2d2d2d"), 1))
+            p.drawLine(QPointF(x2 - fold_size, y2), QPointF(x2, y2 - fold_size))
+
+            # Subtle inner paper edge highlights
+            p.setPen(QPen(QColor("#686868" if self._hovered else "#5e5e5e"), 1))
+            p.drawLine(QPointF(x2 - fold_size, y2), QPointF(x2 - fold_size, y2 - fold_size))
+            p.drawLine(QPointF(x2 - fold_size, y2 - fold_size), QPointF(x2, y2 - fold_size))
 
     def enterEvent(self, event):
         super().enterEvent(event)
@@ -495,16 +536,18 @@ class NotesListWindow(QWidget):
         notes_data = db.get_all_notes()
 
         # If any open notes in memory have newer unsaved content or titles, merge them
-        if self.tray_manager and hasattr(self.tray_manager, "open_notes"):
-            open_notes_map = self.tray_manager.open_notes
-            for item in notes_data:
-                nid = item["id"]
-                if nid in open_notes_map:
-                    open_note = open_notes_map[nid]
-                    item["title"] = open_note.title
-                    item["content"] = open_note.text_edit.toHtml()
-                    item["theme"] = open_note._theme_name
-                    item["last_edited"] = open_note.last_edited
+        open_notes_map = self.tray_manager.open_notes if (self.tray_manager and hasattr(self.tray_manager, "open_notes")) else {}
+        for item in notes_data:
+            nid = item["id"]
+            if nid in open_notes_map:
+                open_note = open_notes_map[nid]
+                item["title"] = open_note.title
+                item["content"] = open_note.text_edit.toHtml()
+                item["theme"] = open_note._theme_name
+                item["last_edited"] = open_note.last_edited
+                item["is_open"] = bool(open_note is not None and open_note.isVisible())
+            else:
+                item["is_open"] = bool(item.get("is_open", False))
 
         # Clear existing cards
         for card in self._cards:
@@ -558,6 +601,7 @@ class NotesListWindow(QWidget):
     def _open_note(self, note_id: str):
         if self.tray_manager and hasattr(self.tray_manager, "_focus_note"):
             self.tray_manager._focus_note(note_id)
+            QTimer.singleShot(50, self.refresh_notes)
 
     def _confirm_delete_note(self, note_id: str):
         msg = QMessageBox(self)
