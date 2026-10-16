@@ -9,13 +9,14 @@ from PyQt6.QtWidgets import (
     QApplication, QDialog, QCheckBox, QFrame, QSystemTrayIcon, QPlainTextEdit,
 )
 from PyQt6.QtCore import (
-    QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray, QUrl,
+    QSettings, pyqtSignal, Qt, QPoint, QRect, QRectF, QSize, QByteArray, QUrl,
     QPropertyAnimation, QParallelAnimationGroup, QEasingCurve,
     QEvent, QTimer,
 )
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextBlockFormat, QTextCursor, QKeySequence,
     QShortcut, QFont, QFontMetrics, QDesktopServices, QPalette, QTextDocument,
+    QPainter, QPen,
 )
 
 from . import __version__
@@ -330,7 +331,7 @@ class _DeleteButton(QPushButton):
         self.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
-                color: #2b2b2b;
+                color: #ffffff;
                 border: none;
                 border-radius: 6px;
                 padding: 8px 10px;
@@ -339,11 +340,11 @@ class _DeleteButton(QPushButton):
                 text-align: left;
             }
             QPushButton:hover {
-                background-color: #fdf0f0;
-                color: #c0341d;
+                background-color: #3d2426;
+                color: #ff6b6b;
             }
             QPushButton:pressed {
-                background-color: #fce4e6;
+                background-color: #4f2326;
             }
         """)
 
@@ -398,14 +399,22 @@ class OptionsPanel(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Give the popup an alpha channel so the four corners outside the
-        # 8 px border-radius become genuinely transparent, instead of the
-        # default opaque widget background that otherwise frames the panel
-        # with four dark dots.
+        # border-radius become genuinely transparent, while paintEvent draws
+        # an opaque solid background for the panel.
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._dismissed = False
         self._current_theme = current_theme
         self._setup_ui()
         self._apply_panel_style()
+
+    def paintEvent(self, event):
+        """Paint an opaque dark rounded rectangle to prevent note text bleed-through."""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(QColor("#3d3d3d"), 1))
+        p.setBrush(QColor("#2b2b2b"))
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.drawRoundedRect(rect, config.CORNER_RADIUS_PX, config.CORNER_RADIUS_PX)
 
     def hideEvent(self, event):
         # Popup auto-dismisses on outside click via hide(), not close(), so
@@ -428,19 +437,17 @@ class OptionsPanel(QWidget):
         for name, color in self._SWATCHES:
             btn = QPushButton("✓" if name == self._current_theme else "")
             btn.setFixedSize(28, 28)
-            # Swatches carry no text (bar a tick on the active one), so the
-            # colour is the only cue — and at 28px "gray" and "charcoal" are
-            # hard to tell apart. Name them for hover and for screen readers.
             label = name.capitalize()
             btn.setToolTip(label)
             btn.setAccessibleName(f"{label} theme")
-            tick_color = "#ffffff" if name == "charcoal" else "#333333"
+            tick_color = "#ffffff" if name == "charcoal" else "#1a1a1a"
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {color};
                     border-radius: 14px;
                     color: {tick_color};
                     font-size: 9pt;
+                    font-weight: bold;
                     border: none;
                 }}
                 QPushButton:hover {{
@@ -460,7 +467,7 @@ class OptionsPanel(QWidget):
         self.notes_list_btn.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
-                color: #2b2b2b;
+                color: #ffffff;
                 border: none;
                 border-radius: 6px;
                 padding: 8px 10px;
@@ -469,10 +476,10 @@ class OptionsPanel(QWidget):
                 text-align: left;
             }
             QPushButton:hover {
-                background-color: #f0f1f3;
+                background-color: #383838;
             }
             QPushButton:pressed {
-                background-color: #e2e4e8;
+                background-color: #444444;
             }
         """)
         self.notes_list_btn.clicked.connect(self._on_notes_list_clicked)
@@ -508,26 +515,25 @@ class OptionsPanel(QWidget):
         self.notesListRequested.emit()
         self.close()
 
-    # Neutral and "done" styles for the Share / Receive buttons. Opaque colours
-    # for the same reason as _DeleteButton._apply_idle_style.
+    # Neutral and "done" styles for the Share / Receive buttons.
     _ACTION_CSS = """
         QPushButton {
-            background-color: #f3f4f6;
-            color: #2b2b2b;
-            border: 1px solid #e3e5e8;
+            background-color: #383838;
+            color: #ffffff;
+            border: 1px solid #4a4a4a;
             border-radius: 8px;
             padding: 8px 10px;
             font-size: 10pt;
             font-weight: 500;
         }
-        QPushButton:hover { background-color: #e9ebee; border-color: #d6d9dd; }
-        QPushButton:pressed { background-color: #dfe2e6; }
+        QPushButton:hover { background-color: #444444; border-color: #555555; }
+        QPushButton:pressed { background-color: #4e4e4e; }
     """
     _ACTION_DONE_CSS = """
         QPushButton {
-            background-color: #e6f4ea;
-            color: #1e7b3c;
-            border: 1px solid #bfe3cb;
+            background-color: #1e4620;
+            color: #4caf50;
+            border: 1px solid #2e7d32;
             border-radius: 8px;
             padding: 8px 10px;
             font-size: 10pt;
@@ -544,12 +550,9 @@ class OptionsPanel(QWidget):
         return btn
 
     def _separator(self) -> QFrame:
-        # Opaque hex equivalent of rgba(0, 0, 0, 0.10) composited on the
-        # panel's #ffffff (see _DeleteButton._apply_idle_style for why opaque
-        # colors are required here on Wayland-via-XWayland).
         separator = QFrame(self)
         separator.setFixedHeight(1)
-        separator.setStyleSheet("background-color: #e6e6e6;")
+        separator.setStyleSheet("background-color: #3d3d3d;")
         return separator
 
     def show_share_copied(self):
@@ -560,19 +563,7 @@ class OptionsPanel(QWidget):
         QTimer.singleShot(config.SHARE_COPIED_FEEDBACK_MS, self.close)
 
     def _apply_panel_style(self):
-        # Selector-scoped so we don't accidentally restyle every QWidget child
-        # (which would clobber the swatches and delete button stylesheets).
         self.setObjectName("optionsPanel")
-        self.setStyleSheet(
-            f"QWidget#optionsPanel {{ background-color: #ffffff; "
-            f"border-radius: {config.CORNER_RADIUS_PX}px; }}"
-        )
-        shadow = QGraphicsDropShadowEffect(self)
-        blur, offset_y, alpha = config.SHADOW_PANEL
-        shadow.setBlurRadius(blur)
-        shadow.setOffset(0, offset_y)
-        shadow.setColor(QColor(0, 0, 0, alpha))
-        self.setGraphicsEffect(shadow)
 
 
 # ---------------------------------------------------------------------------

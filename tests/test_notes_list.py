@@ -33,6 +33,21 @@ def test_options_panel_has_notes_list_button(qapp):
     mock_slot.assert_called_once()
 
 
+def test_options_panel_paint_event_opaque_background(qapp):
+    """OptionsPanel must paint an opaque background to prevent note text bleed-through."""
+    from PyQt6.QtGui import QPixmap
+    panel = OptionsPanel(current_theme="purple")
+    panel.show()
+    panel.adjustSize()
+    pm = QPixmap(panel.size())
+    panel.render(pm)
+    img = pm.toImage()
+    color = img.pixelColor(5, 50)
+    assert color.name() == "#2b2b2b"
+    assert color.alpha() == 255
+    panel.close()
+
+
 def test_sticky_note_forwards_notes_list_requested(qapp):
     """StickyNote must forward notesListRequested from OptionsPanel."""
     note = StickyNote(note_id="test-note-list-id", content="Test note")
