@@ -1034,13 +1034,13 @@ class FormatBar(QWidget):
 
     def _setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 3, 6, 3)
-        layout.setSpacing(3)
+        layout.setContentsMargins(8, 2, 8, 2)
+        layout.setSpacing(2)
 
-        self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: bold;",            "Bold",      "bold")
-        self.italic_btn    = self._make_btn("I", "italicBtn",    "font-style: italic;",           "Italic",    "italic")
-        self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline;",   "Underline", "underline")
-        self.strike_btn    = self._make_btn("ab", "strikeBtn",   "text-decoration: line-through;", "Strikethrough", "strike")
+        self.bold_btn      = self._make_btn("B", "boldBtn",      "font-weight: 700;",            "Bold",      "bold")
+        self.italic_btn    = self._make_btn("",  "italicBtn",    "",                              "Italic",    "italic")
+        self.underline_btn = self._make_btn("U", "underlineBtn", "text-decoration: underline; font-weight: 600;",   "Underline", "underline")
+        self.strike_btn    = self._make_btn("ab", "strikeBtn",   "text-decoration: line-through; font-weight: 500;", "Strikethrough", "strike")
         # Bullet button uses a painted icon (set in apply_colors); empty text.
         # With no label at all, the tooltip/accessible name is the ONLY thing
         # identifying this button to either a sighted or a screen-reader user.
@@ -1054,7 +1054,7 @@ class FormatBar(QWidget):
         self.checklist_btn = self._make_btn("", "checklistBtn",  "",                              "Checklist", "checklist",
                                             hint="click a box to tick it")
 
-        layout.addStretch()
+        # Left-aligned toolbar layout
         for btn in self._buttons():
             layout.addWidget(btn)
         layout.addStretch()
@@ -1104,13 +1104,13 @@ class FormatBar(QWidget):
             self.apply_colors(*self._last_colors)
 
     def apply_colors(self, bg_color: str, btn_color: str, is_dark_theme: bool):
-        """Restyle the bar surface, all five buttons (via FloatingButton),
-        and the bullet button's painted icon."""
+        """Restyle the bar surface, all buttons (via FloatingButton),
+        and painted icons with balanced optical proportions."""
         self._last_colors = (bg_color, btn_color, is_dark_theme)
 
-        # Font size scales with button size — ~13 at btn 30, ~20 at btn 44
-        font_px = max(11, int(self._btn_size * 0.45))
-        font_css = f"font-size: {font_px}px;"
+        # Font size for text buttons (B, U, ab) balanced with the icons
+        font_px = max(12, int(self._btn_size * 0.44))
+        font_css = f"font-size: {font_px}px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
 
         r = config.CORNER_RADIUS_PX
         self.setStyleSheet(f"""
@@ -1124,8 +1124,12 @@ class FormatBar(QWidget):
             btn.set_font_css(font_css)
         FloatingButton.apply_theme_to_all(self._buttons(), btn_color, is_dark_theme)
 
-        # Painted list icons, recolored to match the current btn_color
-        icon_px = max(14, int(self._btn_size * 0.7))
+        # Optical icon size matching font cap-height
+        icon_px = max(14, int(self._btn_size * 0.52))
+
+        self.italic_btn.setIcon(utils.create_italic_icon(btn_color, icon_px))
+        self.italic_btn.setIconSize(QSize(icon_px, icon_px))
+
         self.bullet_btn.setIcon(utils.create_bullet_list_icon(btn_color, icon_px))
         self.bullet_btn.setIconSize(QSize(icon_px, icon_px))
         self.checklist_btn.setIcon(utils.create_checklist_icon(btn_color, icon_px))

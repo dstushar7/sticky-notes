@@ -97,3 +97,35 @@ def test_format_bar_strike_button_label(qapp):
     """FormatBar strike_btn should use modern 'ab' with line-through."""
     fb = FormatBar()
     assert fb.strike_btn.text() == "ab"
+
+
+def test_italic_icon_and_button(qapp):
+    """FormatBar italic_btn should use a vector Italic icon with serifs."""
+    icon = utils.create_italic_icon("#1a1a1a", 16)
+    assert isinstance(icon, QIcon)
+    assert not icon.isNull()
+
+    fb = FormatBar()
+    fb.apply_colors("#F9E44A", "#1a1a1a", False)
+    assert not fb.italic_btn.icon().isNull()
+
+
+def test_format_bar_is_left_aligned(qapp):
+    """FormatBar should start with buttons on the left and end with stretch."""
+    fb = FormatBar()
+    layout = fb.layout()
+    # First widget must be bold_btn (not a stretch spacer)
+    first_item = layout.itemAt(0)
+    assert first_item.widget() == fb.bold_btn
+    # Last item must be a stretch spacer
+    last_item = layout.itemAt(layout.count() - 1)
+    assert last_item.spacerItem() is not None
+
+
+def test_pin_icon_angled_states(qapp):
+    """Pin icon should support both unpinned outline and pinned filled states."""
+    unpinned = utils.create_pin_icon("#1a1a1a", 24, filled=False)
+    pinned = utils.create_pin_icon("#1a1a1a", 24, filled=True)
+    assert not unpinned.isNull()
+    assert not pinned.isNull()
+

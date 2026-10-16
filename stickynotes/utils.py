@@ -30,8 +30,8 @@ def create_tray_icon() -> QIcon:
     return QIcon(pm)
 
 
-def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
-    """A 'bulleted list' icon: three small dots, each followed by a short bar."""
+def create_bullet_list_icon(color: str, size: int = 16) -> QIcon:
+    """A 'bulleted list' icon calibrated to match toolbar text cap-height."""
     pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
     p.setPen(Qt.PenStyle.NoPen)
@@ -39,12 +39,12 @@ def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
 
     # Three rows: bullet (small filled circle) + horizontal bar
     rows = 3
-    margin_x = size * 0.15
-    bullet_r = size * 0.07
-    bar_h = max(1.5, size * 0.08)
-    row_spacing = size * 0.28
+    margin_x = size * 0.12
+    bullet_r = size * 0.08
+    bar_h = max(1.3, size * 0.09)
+    row_spacing = size * 0.26
     first_y = (size - row_spacing * (rows - 1)) / 2  # vertically center the group
-    bar_x = margin_x + bullet_r * 2 + size * 0.10
+    bar_x = margin_x + bullet_r * 2 + size * 0.12
     bar_w = size - bar_x - margin_x
 
     for i in range(rows):
@@ -59,24 +59,21 @@ def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
     return QIcon(pm)
 
 
-def create_checklist_icon(color: str, size: int = 24) -> QIcon:
-    """A 'checklist' icon: three rows of a small square box plus a short bar,
-    with a tick in the first box. Deliberately mirrors the geometry of
-    create_bullet_list_icon so the two toolbar buttons read as siblings —
-    same three rows, same bar lengths, box instead of bullet."""
+def create_checklist_icon(color: str, size: int = 16) -> QIcon:
+    """A 'checklist' icon calibrated to match toolbar text cap-height."""
     pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
 
     rows = 3
-    margin_x = size * 0.15
-    box = size * 0.17                     # box side length
-    bar_h = max(1.5, size * 0.08)
-    row_spacing = size * 0.28
+    margin_x = size * 0.12
+    box = size * 0.19                     # box side length
+    bar_h = max(1.3, size * 0.09)
+    row_spacing = size * 0.26
     first_y = (size - row_spacing * (rows - 1)) / 2
-    bar_x = margin_x + box + size * 0.12
+    bar_x = margin_x + box + size * 0.14
     bar_w = size - bar_x - margin_x
 
-    stroke = max(1.0, size * 0.055)
+    stroke = max(1.0, size * 0.065)
     for i in range(rows):
         cy = first_y + i * row_spacing
         box_rect = QRectF(margin_x, cy - box / 2, box, box)
@@ -89,7 +86,7 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(box_rect)
 
-        # Tick in the first box only — signals "checklist", not "empty boxes"
+        # Tick in the first box only
         if i == 0:
             tick = QPen(qcolor)
             tick.setWidthF(stroke * 1.15)
@@ -97,12 +94,12 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
             tick.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             p.setPen(tick)
             p.drawPolyline(QPolygonF([
-                QPointF(box_rect.left() + box * 0.22, box_rect.center().y()),
-                QPointF(box_rect.center().x(),        box_rect.bottom() - box * 0.24),
-                QPointF(box_rect.right() - box * 0.16, box_rect.top() + box * 0.22),
+                QPointF(box_rect.left() + box * 0.20, box_rect.center().y()),
+                QPointF(box_rect.center().x(),        box_rect.bottom() - box * 0.20),
+                QPointF(box_rect.right() - box * 0.15, box_rect.top() + box * 0.18),
             ]))
 
-        # Bar (rounded ends), same as the bullet-list icon
+        # Bar (rounded ends)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(qcolor)
         bar_rect = QRectF(bar_x, cy - bar_h / 2, bar_w, bar_h)
@@ -112,37 +109,77 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
     return QIcon(pm)
 
 
+def create_italic_icon(color: str, size: int = 16) -> QIcon:
+    """Crisp vector Italic 'I' icon with top and bottom serifs."""
+    pm, p = _make_crisp_pixmap(size)
+    stroke = max(1.4, size * 0.09)
+    pen = QPen(QColor(color))
+    pen.setWidthF(stroke)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+
+    cx, cy = size / 2.0, size / 2.0
+    h = size * 0.58
+    top_y = cy - h / 2.0
+    bot_y = cy + h / 2.0
+    slant = size * 0.11
+    top_cx = cx + slant
+    bot_cx = cx - slant
+
+    serif_w = size * 0.18
+    # Top horizontal serif
+    p.drawLine(QPointF(top_cx - serif_w, top_y), QPointF(top_cx + serif_w, top_y))
+    # Bottom horizontal serif
+    p.drawLine(QPointF(bot_cx - serif_w, bot_y), QPointF(bot_cx + serif_w, bot_y))
+    # Slanted center stem
+    p.drawLine(QPointF(top_cx, top_y), QPointF(bot_cx, bot_y))
+
+    p.end()
+    return QIcon(pm)
+
+
 def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
-    """A thumbtack: round head, flange, and a stubby needle."""
+    """Modern 45-degree angled pushpin icon for 'Always on top' state."""
     pm, p = _make_crisp_pixmap(size)
     qcolor = QColor(color)
 
+    p.translate(size / 2.0, size / 2.0)
+    p.rotate(45)
+
+    stroke = max(1.2, size * 0.08)
+    pen = QPen(qcolor)
+    pen.setWidthF(stroke)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+
     if filled:
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(pen)
         p.setBrush(qcolor)
     else:
-        pen = QPen(qcolor)
-        pen.setWidthF(max(1.2, size * 0.085))
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
 
-    cx = size / 2
-    head_r = size * 0.235          # bigger head reads as a tack, not a balloon
-    head_cy = size * 0.31
-    flange_half = size * 0.30      # wide shoulder under the head
-    flange_y = head_cy + head_r * 0.85
-    needle_half = size * 0.055
-    tip_y = size * 0.90
+    # Head (rounded cap at top)
+    head_w = size * 0.34
+    head_h = size * 0.16
+    head_y = -size * 0.40
+    p.drawRoundedRect(QRectF(-head_w / 2.0, head_y, head_w, head_h), 1.5, 1.5)
 
-    p.drawEllipse(QPointF(cx, head_cy), head_r, head_r)
-    p.drawPolygon(QPolygonF([
-        QPointF(cx - flange_half, flange_y),
-        QPointF(cx + flange_half, flange_y),
-        QPointF(cx + needle_half, flange_y + size * 0.10),
-        QPointF(cx,               tip_y),
-        QPointF(cx - needle_half, flange_y + size * 0.10),
-    ]))
+    # Body (tapering down to the neck)
+    body = QPolygonF([
+        QPointF(-head_w * 0.35, head_y + head_h),
+        QPointF(head_w * 0.35,  head_y + head_h),
+        QPointF(head_w * 0.52,  head_y + head_h + size * 0.18),
+        QPointF(-head_w * 0.52, head_y + head_h + size * 0.18),
+    ])
+    p.drawPolygon(body)
+
+    # Needle (sharp pin pointing down-left into the surface)
+    needle_pen = QPen(qcolor)
+    needle_pen.setWidthF(max(1.2, stroke * 1.0))
+    needle_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(needle_pen)
+    p.drawLine(QPointF(0, head_y + head_h + size * 0.18), QPointF(0, size * 0.40))
 
     p.end()
     return QIcon(pm)
