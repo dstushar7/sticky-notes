@@ -12,8 +12,7 @@ def _app():
     return QApplication.instance() or QApplication([])
 
 
-def test_new_list_hides_qt_marker_for_custom_alignment():
-    _app()
+def test_new_list_hides_qt_marker_for_custom_alignment(qapp):
     note = StickyNote(note_id="marker-alignment-new")
     note.text_edit.setPlainText("မြန်မာ English")
     note._toggle_bullet_list()
@@ -23,8 +22,7 @@ def test_new_list_hides_qt_marker_for_custom_alignment():
     assert text_list.format().intProperty(QTextFormat.Property.ListStyle) == 0
 
 
-def test_pasted_list_hides_qt_marker_for_custom_alignment():
-    _app()
+def test_pasted_list_hides_qt_marker_for_custom_alignment(qapp):
     edit = NoteTextEdit()
     edit.document().setHtml("<ul><li>မြန်မာ English</li></ul>")
     edit.hide_native_list_markers()
@@ -34,8 +32,7 @@ def test_pasted_list_hides_qt_marker_for_custom_alignment():
     assert text_list.format().intProperty(QTextFormat.Property.ListStyle) == 0
 
 
-def test_custom_marker_uses_the_actual_myanmar_line_box():
-    _app()
+def test_custom_marker_uses_the_actual_myanmar_line_box(qapp):
     edit = NoteTextEdit()
     edit.resize(400, 160)
     edit.setPlainText("မြန်မာ English")
@@ -45,7 +42,7 @@ def test_custom_marker_uses_the_actual_myanmar_line_box():
     list_format.setProperty(QTextFormat.Property.ListStyle, 0)
     cursor.createList(list_format)
     edit.show()
-    _app().processEvents()
+    qapp.processEvents()
 
     block = edit.document().firstBlock()
     line = block.layout().lineAt(0)

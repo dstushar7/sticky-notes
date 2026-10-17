@@ -16,7 +16,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextBlockFormat, QTextCursor, QKeySequence,
     QShortcut, QFont, QFontMetrics, QDesktopServices, QPalette, QTextDocument,
-    QPainter, QPen, QPainterPath,
+    QPainter, QPen, QPainterPath, QPolygonF, QTextCharFormat,
 )
 
 from . import __version__
@@ -27,7 +27,10 @@ from . import xwm
 from . import sharing
 from . import storage
 from .widgets import FloatingButton
-from .richtext import hide_native_list_marker, sanitized_fragment, style_for_indent
+from .richtext import (
+    hide_native_list_marker, sanitized_fragment, style_for_indent,
+    _CUSTOM_STRIKE_PROP, doc_to_html_with_strikethrough,
+)
 
 
 def _now_iso() -> str:
@@ -123,6 +126,88 @@ _EDGES = {
 # NoteTextEdit — Shift+Enter list-break, Tab/Shift+Tab sublist nesting
 # ---------------------------------------------------------------------------
 class NoteTextEdit(QTextEdit):
+    markerToggled = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.document().setIndentWidth(config.LIST_INDENT_PX)
+        self._syncing_strike = False
+        self.cursorPositionChanged.connect(self._sync_cursor_format_for_task)
+
+    def is_strikethrough(self, target) -> bool:
+        """True if target (QTextBlock, QTextCursor, or QTextFragment) is struck through."""
+        if isinstance(target, QTextCursor):
+            block = target.block()
+            if _is_checklist_block(block) and block.blockFormat().marker() == _MARKER_CHECKED:
+                return True
+            cf = target.charFormat()
+            return bool(cf.boolProperty(_CUSTOM_STRIKE_PROP) or cf.fontStrikeOut())
+        elif hasattr(target, "blockFormat"):  # QTextBlock
+            if _is_checklist_block(target) and target.blockFormat().marker() == _MARKER_CHECKED:
+                return True
+            it = target.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                if frag.isValid() and (frag.charFormat().boolProperty(_CUSTOM_STRIKE_PROP) or frag.charFormat().fontStrikeOut()):
+                    return True
+                it += 1
+            return False
+        elif hasattr(target, "charFormat"):  # QTextFragment
+            return bool(target.charFormat().boolProperty(_CUSTOM_STRIKE_PROP) or target.charFormat().fontStrikeOut())
+        return False
+
+    def convert_native_strike_to_custom(self):
+        """Convert native fontStrikeOut into _CUSTOM_STRIKE_PROP and clear
+        native strikeout so Qt does not draw its misplaced strikethrough line.
+        """
+        block = self.document().begin()
+        while block.isValid():
+            is_task = _is_checklist_block(block)
+            is_task_checked = is_task and block.blockFormat().marker() == _MARKER_CHECKED
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                if frag.isValid():
+                    cf = frag.charFormat()
+                    if cf.fontStrikeOut() or cf.boolProperty(_CUSTOM_STRIKE_PROP):
+                        c = QTextCursor(block)
+                        c.setPosition(frag.position())
+                        c.setPosition(frag.position() + frag.length(), QTextCursor.MoveMode.KeepAnchor)
+                        cf2 = QTextCharFormat()
+                        cf2.setFontStrikeOut(False)
+                        if not is_task and cf.fontStrikeOut():
+                            cf2.setProperty(_CUSTOM_STRIKE_PROP, True)
+                        else:
+                            cf2.setProperty(_CUSTOM_STRIKE_PROP, False)
+                        c.mergeCharFormat(cf2)
+                it += 1
+            block = block.next()
+        self.viewport().update()
+
+    def toHtml(self) -> str:
+        """Export HTML with standard text-decoration: line-through."""
+        return doc_to_html_with_strikethrough(self.document())
+
+    def setHtml(self, html: str):
+        super().setHtml(html)
+        self.convert_native_strike_to_custom()
+
+    def _sync_cursor_format_for_task(self):
+        cursor = self.textCursor()
+        block = cursor.block()
+        if not _is_checklist_block(block):
+            return
+        cf = self.currentCharFormat()
+        if cf.fontStrikeOut() or cf.boolProperty(_CUSTOM_STRIKE_PROP):
+            cf.setFontStrikeOut(False)
+            cf.setProperty(_CUSTOM_STRIKE_PROP, False)
+            self.setCurrentCharFormat(cf)
+
+    def sync_checklist_strikethrough(self):
+        """Ensure native fontStrikeOut is cleared and viewport is updated."""
+        self.convert_native_strike_to_custom()
+        self.viewport().update()
+
     def set_list_marker_color(self, color: str):
         """Use the editor's stylesheet text colour for custom list glyphs."""
         self._list_marker_color = QColor(color)
@@ -145,56 +230,124 @@ class NoteTextEdit(QTextEdit):
                 hide_native_list_marker(fmt)
                 text_list.setFormat(fmt)
             block = block.next()
+        self.convert_native_strike_to_custom()
 
     def paintEvent(self, event):
-        """Paint list glyphs using the actual first-line height.
+        """Paint list glyphs and strikethroughs using the actual visual line height.
 
-        Qt's QTextDocumentLayout centres a list glyph in the default font's
-        line height.  That is visibly too high for a line enlarged by a
-        fallback font (Myanmar is one example).  QTextList remains the source
-        of truth; only its inaccessible built-in decoration is replaced.
+        Qt's QTextDocumentLayout centres list glyphs and strikethroughs using
+        the default font's line metrics. That is visibly misplaced for lines
+        enlarged by fallback fonts (such as Myanmar). Custom drawing centres
+        them in the actual text line box across all languages.
         """
         super().paintEvent(event)
 
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(
+        default_color = (
             getattr(self, "_list_marker_color", None)
             or self.palette().color(QPalette.ColorRole.Text)
         )
+        painter.setPen(default_color)
 
         block = self.document().begin()
         viewport = self.viewport().rect()
         while block.isValid():
-            text_list = block.textList()
-            if text_list is not None:
-                layout = block.layout()
-                if layout is not None and layout.lineCount():
-                    line = layout.lineAt(0)
-                    cursor_rect = self.cursorRect(QTextCursor(block))
-                    line_rect = line.naturalTextRect()
-                    # cursorRect gives viewport coordinates; naturalTextRect
-                    # gives the glyph box relative to this visual line.
+            layout = block.layout()
+            if layout is not None and layout.lineCount():
+                cursor_rect = self.cursorRect(QTextCursor(block))
+                text_list = block.textList()
+                line0 = layout.lineAt(0)
+                line0_start_x, _ = line0.cursorToX(line0.textStart())
+                base_x = cursor_rect.left() - line0_start_x
+
+                # 1. List markers (bullets or checkboxes)
+                if text_list is not None:
+                    line_rect = line0.naturalTextRect()
                     center_y = cursor_rect.top() + line_rect.center().y()
                     if viewport.top() - 12 <= center_y <= viewport.bottom() + 12:
                         font = block.charFormat().font()
                         metrics = QFontMetrics(font)
                         glyph_size = max(2.0, metrics.lineSpacing() / 3.0)
-                        center_x = (
-                            cursor_rect.left()
-                            - metrics.horizontalAdvance(" ")
-                            - glyph_size / 2.0
-                        )
                         marker = block.blockFormat().marker()
                         if marker != _MARKER_NONE:
+                            # A checkbox is wider than a bullet glyph (2x size).
+                            # Position it with space behind it so the text cursor doesn't touch the box.
+                            box_size = glyph_size * 2.0
+                            space_behind = max(6.0, metrics.horizontalAdvance(" ") + 2.0)
+                            center_x = cursor_rect.left() - space_behind - box_size / 2.0
                             self._paint_check_marker(
                                 painter, center_x, center_y, glyph_size, marker
                             )
                         else:
+                            center_x = (
+                                cursor_rect.left()
+                                - metrics.horizontalAdvance(" ")
+                                - glyph_size / 2.0
+                            )
                             self._paint_list_glyph(
                                 painter, center_x, center_y, glyph_size,
                                 text_list.format().indent(),
                             )
+
+                # 2. Strikethrough lines (completed tasks or formatted text)
+                is_checked_task = (
+                    text_list is not None
+                    and block.blockFormat().marker() == _MARKER_CHECKED
+                )
+                struck_spans = []
+                if not is_checked_task:
+                    it = block.begin()
+                    while not it.atEnd():
+                        frag = it.fragment()
+                        if frag.isValid() and (
+                            frag.charFormat().boolProperty(_CUSTOM_STRIKE_PROP)
+                            or frag.charFormat().fontStrikeOut()
+                        ):
+                            start = frag.position() - block.position()
+                            end = start + frag.length()
+                            color = (
+                                frag.charFormat().foreground().color()
+                                if frag.charFormat().foreground().style() != Qt.BrushStyle.NoBrush
+                                else default_color
+                            )
+                            struck_spans.append((start, end, color))
+                        it += 1
+
+                if is_checked_task or struck_spans:
+                    for i in range(layout.lineCount()):
+                        line = layout.lineAt(i)
+                        center_y = cursor_rect.top() + line.naturalTextRect().center().y()
+                        if not (viewport.top() - 12 <= center_y <= viewport.bottom() + 12):
+                            continue
+                        draw_y = int(round(center_y))
+                        l_start = line.textStart()
+                        l_len = line.textLength()
+                        l_end = l_start + l_len
+                        if is_checked_task:
+                            txt = block.text()[l_start:l_end]
+                            txt_len = len(txt.rstrip())
+                            if txt_len > 0:
+                                x1, _ = line.cursorToX(l_start)
+                                x2, _ = line.cursorToX(l_start + txt_len)
+                                if x2 > x1:
+                                    painter.setPen(QPen(default_color, 1.0))
+                                    painter.drawLine(int(base_x + x1), draw_y, int(base_x + x2), draw_y)
+                        else:
+                            for s_start, s_end, color in struck_spans:
+                                ov_start = max(s_start, l_start)
+                                ov_end = min(s_end, l_end)
+                                if ov_start < ov_end:
+                                    if ov_end == l_end:
+                                        line_txt = block.text()[ov_start:ov_end]
+                                        ov_end = ov_start + len(line_txt.rstrip())
+                                    if ov_start < ov_end:
+                                        x1, _ = line.cursorToX(ov_start)
+                                        x2, _ = line.cursorToX(ov_end)
+                                        if x2 > x1:
+                                            painter.setPen(QPen(color, 1.0))
+                                            painter.drawLine(int(base_x + x1), draw_y, int(base_x + x2), draw_y)
+
             block = block.next()
         painter.end()
 
@@ -221,15 +374,22 @@ class NoteTextEdit(QTextEdit):
             center_x - box_size / 2, center_y - box_size / 2,
             box_size, box_size,
         )
-        painter.drawRect(rect)
+        painter.save()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect, 1.5, 1.5)
         if marker == _MARKER_CHECKED:
-            painter.save()
-            pen = painter.pen()
-            pen.setWidth(2)
+            pen = QPen(painter.pen().color())
+            stroke = max(1.6, box_size * 0.14)
+            pen.setWidthF(stroke)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)
-            painter.drawLine(rect.topLeft(), rect.bottomRight())
-            painter.drawLine(rect.topRight(), rect.bottomLeft())
-            painter.restore()
+            painter.drawPolyline(QPolygonF([
+                QPointF(rect.left() + box_size * 0.22, rect.top() + box_size * 0.52),
+                QPointF(rect.left() + box_size * 0.44, rect.top() + box_size * 0.74),
+                QPointF(rect.left() + box_size * 0.80, rect.top() + box_size * 0.26),
+            ]))
+        painter.restore()
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -266,6 +426,12 @@ class NoteTextEdit(QTextEdit):
             if fmt.marker() == _MARKER_CHECKED:
                 fmt.setMarker(_MARKER_UNCHECKED)
                 new_cursor.setBlockFormat(fmt)
+            cf = new_cursor.charFormat()
+            if cf.fontStrikeOut() or cf.boolProperty(_CUSTOM_STRIKE_PROP):
+                cf.setFontStrikeOut(False)
+                cf.setProperty(_CUSTOM_STRIKE_PROP, False)
+                new_cursor.setCharFormat(cf)
+                self.setCurrentCharFormat(cf)
             return
 
         super().keyPressEvent(event)
@@ -276,8 +442,9 @@ class NoteTextEdit(QTextEdit):
         if source.hasHtml():
             self.textCursor().insertFragment(sanitized_fragment(source.html()))
             self.ensureCursorVisible()
-            return
-        super().insertFromMimeData(source)
+        else:
+            super().insertFromMimeData(source)
+        self.convert_native_strike_to_custom()
 
     def _marker_block_at(self, pos):
         """Return the checklist block whose checkbox sits at viewport `pos`,
@@ -338,11 +505,27 @@ class NoteTextEdit(QTextEdit):
         document, so it flows through textChanged -> autosave like any edit."""
         cursor = QTextCursor(block)
         fmt = cursor.blockFormat()
-        fmt.setMarker(
-            _MARKER_UNCHECKED if fmt.marker() == _MARKER_CHECKED
-            else _MARKER_CHECKED
-        )
-        cursor.setBlockFormat(fmt)
+        is_checked = fmt.marker() == _MARKER_CHECKED
+        new_marker = _MARKER_UNCHECKED if is_checked else _MARKER_CHECKED
+
+        self._syncing_strike = True
+        try:
+            cursor.beginEditBlock()
+            fmt.setMarker(new_marker)
+            cursor.setBlockFormat(fmt)
+
+            cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+            char_fmt = QTextCharFormat()
+            char_fmt.setFontStrikeOut(False)
+            char_fmt.setProperty(_CUSTOM_STRIKE_PROP, False)
+            cursor.mergeCharFormat(char_fmt)
+            cursor.endEditBlock()
+        finally:
+            self._syncing_strike = False
+
+        self._sync_cursor_format_for_task()
+        self.viewport().update()
+        self.markerToggled.emit()
 
     def _break_out_of_list(self):
         cursor = self.textCursor()
@@ -359,6 +542,11 @@ class NoteTextEdit(QTextEdit):
         # for hover purposes.
         fmt.setMarker(_MARKER_NONE)
         cursor.setBlockFormat(fmt)
+        cf = cursor.charFormat()
+        if cf.fontStrikeOut():
+            cf.setFontStrikeOut(False)
+            cursor.setCharFormat(cf)
+            self.setCurrentCharFormat(cf)
         self.setTextCursor(cursor)
 
     def _change_list_indent(self, increase: bool):
@@ -1729,6 +1917,7 @@ class StickyNote(QWidget):
 
         # Reflect cursor's current formatting in the toolbar's checked state.
         self.text_edit.cursorPositionChanged.connect(self._refresh_format_bar)
+        self.text_edit.markerToggled.connect(self._refresh_format_bar)
         self.text_edit.currentCharFormatChanged.connect(
             lambda _fmt: self._refresh_format_bar()
         )
@@ -2094,9 +2283,28 @@ class StickyNote(QWidget):
         self.text_edit.mergeCurrentCharFormat(fmt)
 
     def _toggle_strike(self):
-        fmt = self.text_edit.currentCharFormat()
-        fmt.setFontStrikeOut(not fmt.fontStrikeOut())
-        self.text_edit.mergeCurrentCharFormat(fmt)
+        cursor = self.text_edit.textCursor()
+        # Strikethrough button and shortcut are not active for tasks
+        if _cursor_in_checklist(cursor):
+            return
+        if cursor.hasSelection():
+            doc = self.text_edit.document()
+            start_block = doc.findBlock(cursor.selectionStart())
+            end_block = doc.findBlock(cursor.selectionEnd())
+            b = start_block
+            while b.isValid():
+                if _is_checklist_block(b):
+                    return
+                if b == end_block:
+                    break
+                b = b.next()
+        is_struck = self.text_edit.is_strikethrough(cursor)
+        new_fmt = QTextCharFormat()
+        new_fmt.setFontStrikeOut(False)
+        new_fmt.setProperty(_CUSTOM_STRIKE_PROP, not is_struck)
+        self.text_edit.mergeCurrentCharFormat(new_fmt)
+        self.text_edit.viewport().update()
+        self._refresh_format_bar()
 
     @staticmethod
     def _new_list_format() -> QTextListFormat:
@@ -2182,9 +2390,11 @@ class StickyNote(QWidget):
             self._set_markers(
                 self._expand_to_list_region(cursor), _MARKER_UNCHECKED
             )
+            self.text_edit.sync_checklist_strikethrough()
         else:
             cursor.createList(self._new_list_format())
             self._set_markers(self.text_edit.textCursor(), _MARKER_UNCHECKED)
+            self.text_edit.sync_checklist_strikethrough()
         self._refresh_format_bar()
 
     def _refresh_format_bar(self):
@@ -2194,10 +2404,15 @@ class StickyNote(QWidget):
         self.format_bar.bold_btn.setChecked(fmt.fontWeight() == QFont.Weight.Bold)
         self.format_bar.italic_btn.setChecked(fmt.fontItalic())
         self.format_bar.underline_btn.setChecked(fmt.fontUnderline())
-        self.format_bar.strike_btn.setChecked(fmt.fontStrikeOut())
+        in_checklist = _cursor_in_checklist(cursor)
+        if in_checklist:
+            self.format_bar.strike_btn.setEnabled(False)
+            self.format_bar.strike_btn.setChecked(False)
+        else:
+            self.format_bar.strike_btn.setEnabled(True)
+            self.format_bar.strike_btn.setChecked(self.text_edit.is_strikethrough(cursor))
         # The two list buttons are mutually exclusive: a list either has
         # checkbox markers or it doesn't.
-        in_checklist = _cursor_in_checklist(cursor)
         self.format_bar.bullet_btn.setChecked(
             cursor.currentList() is not None and not in_checklist
         )

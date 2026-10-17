@@ -23,7 +23,7 @@ AUTOSAVE_INTERVAL_MS = 5000
 FONT_FAMILY = "Segoe UI, Ubuntu, Sans Serif"
 FONT_SIZE = 13
 COLLAPSE_ANIMATION_MS = 150
-LIST_INDENT_PX = 18         # bullet/sublist indent (Qt default is 40)
+LIST_INDENT_PX = 22         # bullet/sublist indent (Qt default is 40)
 
 # Note titles
 DEFAULT_NOTE_TITLE = "New Note"

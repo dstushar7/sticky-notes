@@ -120,6 +120,10 @@ class FloatingButton(QPushButton):
             pressed_bg = palette['pressed']
             hover_color = text_color
 
+        qc = QColor(text_color)
+        qc.setAlphaF(0.35)
+        disabled_color = qc.name(QColor.NameFormat.HexArgb)
+
         self.setStyleSheet(f"""
             QPushButton {{
                 background-color: {palette['idle']};
@@ -139,6 +143,10 @@ class FloatingButton(QPushButton):
             }}
             QPushButton:checked {{
                 background-color: {palette['checked']};
+            }}
+            QPushButton:disabled {{
+                background-color: transparent;
+                color: {disabled_color};
             }}
         """)
 

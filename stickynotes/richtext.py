@@ -58,6 +58,12 @@ _OBJECT_REPLACEMENT_CHAR = "￼"   # stands in for images / inline objects
 _NBSP = " "
 
 
+# Custom strikethrough property used instead of native fontStrikeOut so
+# strikethrough lines can be custom-painted at the visual vertical center
+# across all languages/scripts (e.g. Myanmar and English).
+_CUSTOM_STRIKE_PROP = QTextFormat.Property.UserProperty + 2
+
+
 def _clean_char_format(src: QTextCharFormat) -> QTextCharFormat:
     fmt = QTextCharFormat()
     if src.fontWeight() >= QFont.Weight.DemiBold:
@@ -68,8 +74,8 @@ def _clean_char_format(src: QTextCharFormat) -> QTextCharFormat:
     # underline would just be a stray decoration.
     if src.fontUnderline() and not src.isAnchor():
         fmt.setFontUnderline(True)
-    if src.fontStrikeOut():
-        fmt.setFontStrikeOut(True)
+    if src.fontStrikeOut() or src.boolProperty(_CUSTOM_STRIKE_PROP):
+        fmt.setProperty(_CUSTOM_STRIKE_PROP, True)
     return fmt
 
 
@@ -125,6 +131,35 @@ def _rebuild(html: str) -> QTextDocument:
     return dst
 
 
+def doc_to_html_with_strikethrough(doc: QTextDocument) -> str:
+    """Export document to HTML with standard text-decoration: line-through.
+    
+    Clones the document and promotes _CUSTOM_STRIKE_PROP and checked checklist
+    blocks to standard fontStrikeOut so exported HTML preserves strikethrough.
+    """
+    clone = doc.clone()
+    b = clone.begin()
+    while b.isValid():
+        is_task_checked = (
+            b.blockFormat().marker() == QTextBlockFormat.MarkerType.Checked
+        )
+        it = b.begin()
+        while not it.atEnd():
+            f = it.fragment()
+            if f.isValid():
+                cf = f.charFormat()
+                if is_task_checked or cf.boolProperty(_CUSTOM_STRIKE_PROP) or cf.fontStrikeOut():
+                    c = QTextCursor(clone)
+                    c.setPosition(f.position())
+                    c.setPosition(f.position() + f.length(), QTextCursor.MoveMode.KeepAnchor)
+                    cf2 = QTextCharFormat()
+                    cf2.setFontStrikeOut(True)
+                    c.mergeCharFormat(cf2)
+            it += 1
+        b = b.next()
+    return clone.toHtml()
+
+
 def sanitized_fragment(html: str) -> QTextDocumentFragment:
     """Sanitised `html` as a fragment, for inserting at the cursor (paste)."""
     return QTextDocumentFragment(_rebuild(html))
@@ -132,4 +167,5 @@ def sanitized_fragment(html: str) -> QTextDocumentFragment:
 
 def sanitized_html(html: str) -> str:
     """Sanitised `html` as a whole document, for loading into a new note."""
-    return _rebuild(html).toHtml()
+    return doc_to_html_with_strikethrough(_rebuild(html))
+
