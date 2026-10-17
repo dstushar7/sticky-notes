@@ -27,7 +27,7 @@ from . import xwm
 from . import sharing
 from . import storage
 from .widgets import FloatingButton
-from .richtext import sanitized_fragment, style_for_indent
+from .richtext import hide_native_list_marker, sanitized_fragment, style_for_indent
 
 
 def _now_iso() -> str:
@@ -123,6 +123,114 @@ _EDGES = {
 # NoteTextEdit — Shift+Enter list-break, Tab/Shift+Tab sublist nesting
 # ---------------------------------------------------------------------------
 class NoteTextEdit(QTextEdit):
+    def set_list_marker_color(self, color: str):
+        """Use the editor's stylesheet text colour for custom list glyphs."""
+        self._list_marker_color = QColor(color)
+        self.viewport().update()
+
+    def hide_native_list_markers(self):
+        """Apply the custom-marker mode to lists restored from HTML.
+
+        Qt serialises both the normal and hidden list variants as ``<ul>``.
+        Consequently each restored list has to be switched back after
+        ``setHtml()``; its indentation and list membership are unaffected.
+        """
+        seen = set()
+        block = self.document().begin()
+        while block.isValid():
+            text_list = block.textList()
+            if text_list is not None and text_list.objectIndex() not in seen:
+                seen.add(text_list.objectIndex())
+                fmt = text_list.format()
+                hide_native_list_marker(fmt)
+                text_list.setFormat(fmt)
+            block = block.next()
+
+    def paintEvent(self, event):
+        """Paint list glyphs using the actual first-line height.
+
+        Qt's QTextDocumentLayout centres a list glyph in the default font's
+        line height.  That is visibly too high for a line enlarged by a
+        fallback font (Myanmar is one example).  QTextList remains the source
+        of truth; only its inaccessible built-in decoration is replaced.
+        """
+        super().paintEvent(event)
+
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(
+            getattr(self, "_list_marker_color", None)
+            or self.palette().color(QPalette.ColorRole.Text)
+        )
+
+        block = self.document().begin()
+        viewport = self.viewport().rect()
+        while block.isValid():
+            text_list = block.textList()
+            if text_list is not None:
+                layout = block.layout()
+                if layout is not None and layout.lineCount():
+                    line = layout.lineAt(0)
+                    cursor_rect = self.cursorRect(QTextCursor(block))
+                    line_rect = line.naturalTextRect()
+                    # cursorRect gives viewport coordinates; naturalTextRect
+                    # gives the glyph box relative to this visual line.
+                    center_y = cursor_rect.top() + line_rect.center().y()
+                    if viewport.top() - 12 <= center_y <= viewport.bottom() + 12:
+                        font = block.charFormat().font()
+                        metrics = QFontMetrics(font)
+                        glyph_size = max(2.0, metrics.lineSpacing() / 3.0)
+                        center_x = (
+                            cursor_rect.left()
+                            - metrics.horizontalAdvance(" ")
+                            - glyph_size / 2.0
+                        )
+                        marker = block.blockFormat().marker()
+                        if marker != _MARKER_NONE:
+                            self._paint_check_marker(
+                                painter, center_x, center_y, glyph_size, marker
+                            )
+                        else:
+                            self._paint_list_glyph(
+                                painter, center_x, center_y, glyph_size,
+                                text_list.format().indent(),
+                            )
+            block = block.next()
+        painter.end()
+
+    @staticmethod
+    def _paint_list_glyph(painter, center_x, center_y, size, indent):
+        rect = QRectF(center_x - size / 2, center_y - size / 2, size, size)
+        style = style_for_indent(indent)
+        if style == QTextListFormat.Style.ListDisc:
+            painter.save()
+            painter.setBrush(painter.pen().color())
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(rect)
+            painter.restore()
+        elif style == QTextListFormat.Style.ListCircle:
+            painter.drawEllipse(rect.translated(0.5, 0.5))
+        else:
+            painter.fillRect(rect, painter.pen().brush())
+
+    @staticmethod
+    def _paint_check_marker(painter, center_x, center_y, size, marker):
+        adjust = size / 2
+        box_size = size + 2 * adjust
+        rect = QRectF(
+            center_x - box_size / 2, center_y - box_size / 2,
+            box_size, box_size,
+        )
+        painter.drawRect(rect)
+        if marker == _MARKER_CHECKED:
+            painter.save()
+            pen = painter.pen()
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.drawLine(rect.topLeft(), rect.bottomRight())
+            painter.drawLine(rect.topRight(), rect.bottomLeft())
+            painter.restore()
+
     def keyPressEvent(self, event):
         key = event.key()
         mods = event.modifiers()
@@ -275,7 +383,7 @@ class NoteTextEdit(QTextEdit):
 
         new_fmt = QTextListFormat()
         new_fmt.setIndent(new_indent)
-        new_fmt.setStyle(style_for_indent(new_indent))
+        hide_native_list_marker(new_fmt)
         cursor.createList(new_fmt)
 
 
@@ -1449,6 +1557,7 @@ class StickyNote(QWidget):
         if content:
             if content.strip().startswith("<"):
                 self.text_edit.setHtml(content)
+                self.text_edit.hide_native_list_markers()
             else:
                 self.text_edit.setPlainText(content)
 
@@ -1756,6 +1865,7 @@ class StickyNote(QWidget):
                 background: none;
             }}
         """)
+        self.text_edit.set_list_marker_color(text_color)
         font = QFont()
         font.setFamilies(["Segoe UI", "Ubuntu", "Sans Serif"])
         font.setPointSize(config.FONT_SIZE)
@@ -1991,8 +2101,8 @@ class StickyNote(QWidget):
     @staticmethod
     def _new_list_format() -> QTextListFormat:
         list_fmt = QTextListFormat()
-        list_fmt.setStyle(QTextListFormat.Style.ListDisc)
         list_fmt.setIndent(1)
+        hide_native_list_marker(list_fmt)
         return list_fmt
 
     def _expand_to_list_region(self, cursor: QTextCursor) -> QTextCursor:

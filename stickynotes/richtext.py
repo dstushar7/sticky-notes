@@ -6,7 +6,7 @@
 
 from PyQt6.QtGui import (
     QFont, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument,
-    QTextDocumentFragment, QTextListFormat,
+    QTextDocumentFragment, QTextFormat, QTextListFormat,
 )
 
 
@@ -16,6 +16,18 @@ _LIST_STYLES = (
     QTextListFormat.Style.ListCircle,
     QTextListFormat.Style.ListSquare,
 )
+
+# QTextDocumentLayout draws built-in list glyphs with the block's default
+# (usually Latin) font metrics, even when the line itself is taller because it
+# contains a fallback-script glyph such as Myanmar.  The editor paints those
+# glyphs itself, centred in the real line box, so keep Qt's marker hidden while
+# preserving QTextList for editing, nesting and HTML round-tripping.
+_HIDDEN_LIST_STYLE = 0
+
+
+def hide_native_list_marker(list_format: QTextListFormat) -> None:
+    """Keep a QTextList's layout/indentation but suppress Qt's list glyph."""
+    list_format.setProperty(QTextFormat.Property.ListStyle, _HIDDEN_LIST_STYLE)
 
 
 def style_for_indent(indent: int) -> QTextListFormat.Style:
@@ -90,7 +102,7 @@ def _rebuild(html: str) -> QTextDocument:
                 indent = max(1, src_list.format().indent())
                 list_fmt = QTextListFormat()
                 list_fmt.setIndent(indent)
-                list_fmt.setStyle(style_for_indent(indent))
+                hide_native_list_marker(list_fmt)
                 lists[src_list.objectIndex()] = cursor.createList(list_fmt)
             else:
                 dst_list.add(cursor.block())
