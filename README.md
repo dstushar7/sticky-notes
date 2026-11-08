@@ -20,6 +20,7 @@ Notes save locally and are restored exactly where you left them between sessions
 - 🎨 **7 color themes** — Yellow, Green, Pink, Purple, Blue, Gray, Charcoal
 - ✍️ **Rich text formatting** — Bold (`Ctrl+B`), Italic (`Ctrl+I`), Underline (`Ctrl+U`), Strikethrough (`Ctrl+Shift+S`)
 - 📋 **Bullet lists with nested sublists** — Toggle with `Ctrl+Shift+L`; `Tab` indents to a sublist (style cycles ●→○→■), `Shift+Tab` outdents; `Enter` continues, `Shift+Enter` breaks out
+- 🔢 **Typed lists continue themselves** — start a line with `1.`, `a.`, `A)`, `-`, `*` or `•` and `Enter` starts the next item (`2.`, `b.` … or the same bullet, same indent), like WhatsApp; `Tab` / `Shift+Tab` nests an item; `Enter` on an empty item steps out a level, then ends the list
 - 🪄 **Collapse / expand** — double-click anywhere on the title bar outside the title to collapse a note to just its header
 - 📤 **Share & Receive** — `•••` → Share copies a note as a short piece of text; paste it in any chat, and the other person adds it with `•••` → Receive (or the tray menu). Same title, text, formatting and color — no account, no cloud
 - 🖱️ **Resizable from all 8 edges and corners** — no OS chrome needed
@@ -91,6 +92,8 @@ Right-click the tray icon to:
 | **Bullet list on/off** | `Ctrl+Shift+L` |
 | **Continue list item** | `Enter` |
 | **Break out of list** | `Shift+Enter` |
+| **Continue a typed `1.` / `a.` / `-` list** | `Enter` (on an empty item: step out a level / end the list) |
+| **Nest / un-nest a typed item** | `Tab` / `Shift+Tab` on a typed `1.` / `a.` / `-` line |
 | **Indent (sublist)** | `Tab` while in a list |
 | **Outdent** | `Shift+Tab` while in a list |
 | **Collapse / expand** | Double-click the title bar outside the title (disabled while collapsed) |

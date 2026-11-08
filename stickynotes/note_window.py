@@ -1,5 +1,6 @@
 # stickynotes/note_window.py
 
+import re
 import uuid
 from datetime import datetime, timezone
 from html import escape as html_escape
@@ -89,6 +90,138 @@ def _cursor_in_checklist(cursor: QTextCursor) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Typed lists (WhatsApp-style auto-continue)
+#
+# A line the user TYPES as "1. milk" or "- milk" is plain text, not a
+# QTextList, so Qt does nothing special on Enter. We continue it ourselves:
+#
+#   "3. eggs"   + Enter -> next line starts "4. "     (also "3)")
+#   "c. eggs"   + Enter -> next line starts "d. "     (a-z, A-Z; stops at z)
+#   "  - eggs"  + Enter -> next line starts "  - "    (indent kept)
+#   "4. "       + Enter -> empty item: step out one level, or end the list
+#   Tab / Shift+Tab     -> nest / un-nest the item (see renest_prefix)
+#
+# Deliberately left as plain text rather than converted to a real list: the
+# sanitiser collapses real numbered lists to bullets, while typed numbers
+# survive copy, paste and Share exactly as written.
+# ---------------------------------------------------------------------------
+_TYPED_ITEM_RE = re.compile(
+    r"^([ \t]*)"                          # 1 indent
+    r"(?:(\d{1,9}|[A-Za-z])([.)])"        # 2,3 "12." "12)" "c." "C)"
+    r"|([-*+•◦▪‣–]))"                     # 4   bullet glyph
+    r"([ \t]+)"                           # 5   gap — required, so "1.5", "-3", "e.g." don't match
+)
+_LINE_SEPARATOR = "\u2028"   # what Shift+Enter inserts outside a list
+_INDENT_UNIT = "    "        # one nesting level of a typed list
+_SIBLING_LOOKBACK = 50       # lines scanned upward for an item at the same level
+
+
+def _indent_width(indent: str) -> int:
+    return len(indent.expandtabs(len(_INDENT_UNIT)))
+
+
+def _outdented(indent: str) -> str:
+    """`indent` one level shallower: drop a trailing tab, or up to one unit of spaces."""
+    if indent.endswith("\t"):
+        return indent[:-1]
+    spaces = len(indent) - len(indent.rstrip(" "))
+    return indent[:len(indent) - min(spaces, len(_INDENT_UNIT))]
+
+
+def _next_token(token: str):
+    """"3" -> "4" (padding kept: "09" -> "10"), "c" -> "d"; None after "z"."""
+    if token.isdigit():
+        return str(int(token) + 1).zfill(len(token))
+    return None if token in "zZ" else chr(ord(token) + 1)
+
+
+def _first_token(token: str) -> str:
+    """Start of a fresh list of the same kind as `token`: "1", "a" or "A"."""
+    if token.isdigit():
+        return "1"
+    return "a" if token.islower() else "A"
+
+
+def typed_list_prefix(line: str):
+    """If `line` starts like a typed list item, return
+    (prefix_length, prefix_for_next_item); otherwise None."""
+    m = _TYPED_ITEM_RE.match(line)
+    if m is None:
+        return None
+    indent, token, delim, bullet, gap = m.groups()
+    if token is None:
+        marker = bullet
+    else:
+        nxt = _next_token(token)
+        if nxt is None:
+            return None
+        marker = nxt + delim
+    return m.end(), f"{indent}{marker}{gap}"
+
+
+def _item_above(indent: str, lines_above):
+    """Match of the nearest typed item above at the same indent, looking past
+    deeper-indented (nested) lines. None if a shallower or non-item line
+    comes first."""
+    width = _indent_width(indent)
+    for i, line in enumerate(lines_above):
+        if i >= _SIBLING_LOOKBACK:
+            break
+        m = _TYPED_ITEM_RE.match(line)
+        line_width = _indent_width(line[:len(line) - len(line.lstrip(" \t"))])
+        if line.strip() and line_width > width:
+            continue   # a nested item or its text — keep looking up
+        if m and line_width == width:
+            return m
+        return None
+    return None
+
+
+def renest_prefix(line: str, deeper: bool, lines_above=()):
+    """For typed item `line` moved one level deeper (Tab) or shallower
+    (Shift+Tab), return (prefix_length, new_prefix); None if `line` isn't an
+    item or is already at the left edge.
+
+    At its new level the item continues the item already there, adopting its
+    style ("2." above -> "3."); with none, it starts over: "1.", "a.", "A.",
+    or keeps its bullet. `lines_above` yields the lines above, nearest first.
+    """
+    m = _TYPED_ITEM_RE.match(line)
+    if m is None:
+        return None
+    indent, token, delim, bullet, gap = m.groups()
+    if deeper:
+        new_indent = indent + _INDENT_UNIT
+    elif indent:
+        new_indent = _outdented(indent)
+    else:
+        return None
+
+    marker = None
+    above = _item_above(new_indent, lines_above)
+    if above is not None:
+        if above.group(2) is None:
+            marker = above.group(4)
+        else:
+            nxt = _next_token(above.group(2))
+            marker = nxt and nxt + above.group(3)
+    if marker is None:
+        marker = bullet if token is None else _first_token(token) + delim
+    return m.end(), f"{new_indent}{marker}{gap}"
+
+
+def _lines_above(block, line_start: int):
+    """Lines above position `line_start` of `block`, nearest first, across
+    Shift+Enter separators and earlier blocks."""
+    if line_start:
+        yield from reversed(block.text()[:line_start].split(_LINE_SEPARATOR)[:-1])
+    block = block.previous()
+    while block.isValid():
+        yield from reversed(block.text().split(_LINE_SEPARATOR))
+        block = block.previous()
+
+
+# ---------------------------------------------------------------------------
 # Resize zone ids
 # ---------------------------------------------------------------------------
 _NONE, _N, _NE, _E, _SE, _S, _SW, _W, _NW = range(9)
@@ -118,7 +251,8 @@ _EDGES = {
 
 
 # ---------------------------------------------------------------------------
-# NoteTextEdit — Shift+Enter list-break, Tab/Shift+Tab sublist nesting
+# NoteTextEdit — Shift+Enter list-break, Tab/Shift+Tab sublist nesting,
+# Enter continues typed "1. " / "- " lists
 # ---------------------------------------------------------------------------
 class NoteTextEdit(QTextEdit):
     def keyPressEvent(self, event):
@@ -158,7 +292,112 @@ class NoteTextEdit(QTextEdit):
                 new_cursor.setBlockFormat(fmt)
             return
 
+        # Enter / Tab / Shift+Tab on a typed "1. " / "- " line (see
+        # typed_list_prefix). Real lists never get here: Qt continues them
+        # and the Tab branch above nests them.
+        no_mods = not (mods & (Qt.KeyboardModifier.ControlModifier
+                               | Qt.KeyboardModifier.AltModifier
+                               | Qt.KeyboardModifier.MetaModifier))
+        if no_mods and not cursor.hasSelection() and cursor.currentList() is None:
+            if (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and not (mods & Qt.KeyboardModifier.ShiftModifier)
+                    and self._continue_typed_list(cursor)):
+                return
+            if (key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+                    and self._renest_typed_item(cursor, deeper=(
+                        key == Qt.Key.Key_Tab
+                        and not (mods & Qt.KeyboardModifier.ShiftModifier)))):
+                return
+
         super().keyPressEvent(event)
+
+    @staticmethod
+    def _typed_line(cursor: QTextCursor):
+        """(line_start, line_end, line) of the line holding the cursor, as
+        offsets into its block. Shift+Enter splits a block into several lines
+        with U+2028, so a line is only the stretch between separators."""
+        text = cursor.block().text()
+        col = cursor.positionInBlock()
+        line_start = text.rfind(_LINE_SEPARATOR, 0, col) + 1
+        line_end = text.find(_LINE_SEPARATOR, col)
+        if line_end == -1:
+            line_end = len(text)
+        return line_start, line_end, text[line_start:line_end]
+
+    @staticmethod
+    def _line_format(block, line_start: int):
+        """Char format of the line's first character — what a rewritten
+        marker is given, so a plain "1." stays plain after a bold item."""
+        probe = QTextCursor(block)
+        probe.setPosition(block.position() + line_start + 1)
+        return probe.charFormat()
+
+    def _replace_prefix(self, cursor, line_start, prefix_len, new_prefix):
+        """Swap the marker at the start of the cursor's line for `new_prefix`,
+        keeping the cursor at the same spot in the item's text."""
+        block = cursor.block()
+        base = block.position() + line_start
+        text_offset = max(0, cursor.position() - base - prefix_len)
+        fmt = self._line_format(block, line_start)
+        cursor.beginEditBlock()
+        cursor.setPosition(base)
+        cursor.setPosition(base + prefix_len, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(new_prefix, fmt)
+        cursor.endEditBlock()
+        cursor.setPosition(base + len(new_prefix) + text_offset)
+        self.setTextCursor(cursor)
+
+    def _continue_typed_list(self, cursor: QTextCursor) -> bool:
+        """Handle Enter on a typed list line. Returns False to let Qt do an
+        ordinary Enter (not a list line, or the cursor is inside the marker)."""
+        block = cursor.block()
+        line_start, line_end, line = self._typed_line(cursor)
+        found = typed_list_prefix(line)
+        if found is None:
+            return False
+        prefix_len, next_prefix = found
+        if cursor.positionInBlock() - line_start < prefix_len:
+            return False   # cursor before/inside "1. " — plain Enter, no new marker
+
+        if not line[prefix_len:].strip():
+            # Empty item: step out a level if nested, else finish the list
+            # by dropping the marker and staying on the line.
+            outer = renest_prefix(line, False, _lines_above(block, line_start))
+            if outer is not None:
+                self._replace_prefix(cursor, line_start, prefix_len, outer[1])
+            else:
+                base = block.position()
+                cursor.setPosition(base + line_start)
+                cursor.setPosition(base + line_end, QTextCursor.MoveMode.KeepAnchor)
+                cursor.removeSelectedText()
+                self.setTextCursor(cursor)
+            return True
+
+        # The new marker copies the previous marker's formatting, while the
+        # text typed after it keeps whatever format was active at the cursor
+        # — the same as Qt's own Enter.
+        marker_fmt = self._line_format(block, line_start)
+        typing_fmt = cursor.charFormat()
+        cursor.beginEditBlock()
+        cursor.insertBlock()
+        cursor.insertText(next_prefix, marker_fmt)
+        cursor.setCharFormat(typing_fmt)
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+        return True
+
+    def _renest_typed_item(self, cursor: QTextCursor, deeper: bool) -> bool:
+        """Tab / Shift+Tab anywhere on a typed list line. Returns False to let
+        Qt handle the key (not a list line)."""
+        line_start, _, line = self._typed_line(cursor)
+        found = renest_prefix(line, deeper, _lines_above(cursor.block(), line_start))
+        if found is None:
+            # Shift+Tab on a top-level item: nothing to do, but still ours —
+            # Qt would otherwise move keyboard focus out of the note.
+            return _TYPED_ITEM_RE.match(line) is not None
+        self._replace_prefix(cursor, line_start, *found)
+        return True
 
     def insertFromMimeData(self, source):
         """Paste / drop. Rich content is sanitised (see richtext);
