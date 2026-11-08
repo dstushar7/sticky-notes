@@ -101,6 +101,11 @@ def _cursor_in_checklist(cursor: QTextCursor) -> bool:
 #   "4. "       + Enter -> empty item: step out one level, or end the list
 #   Tab / Shift+Tab     -> nest / un-nest the item (see renest_prefix)
 #
+# Numbered and lettered items are renumbered after Enter, Tab/Shift+Tab and
+# deletions, so inserting "2. bread" above "2. eggs" turns it into "3. eggs".
+# A "level" is the run of same-kind items at one indent; nested lines inside
+# it are skipped over, and a blank or plain line ends it.
+#
 # Deliberately left as plain text rather than converted to a real list: the
 # sanitiser collapses real numbered lists to bullets, while typed numbers
 # survive copy, paste and Share exactly as written.
@@ -159,22 +164,39 @@ def typed_list_prefix(line: str):
     return m.end(), f"{indent}{marker}{gap}"
 
 
-def _item_above(indent: str, lines_above):
-    """Match of the nearest typed item above at the same indent, looking past
-    deeper-indented (nested) lines. None if a shallower or non-item line
-    comes first."""
+def _same_kind(a: str, b: str) -> bool:
+    """Both numbers, or both letters of the same case."""
+    if a.isdigit() or b.isdigit():
+        return a.isdigit() and b.isdigit()
+    return a.islower() == b.islower()
+
+
+def _line_indent_width(line: str) -> int:
+    return _indent_width(line[:len(line) - len(line.lstrip(" \t"))])
+
+
+def _level_context(indent: str, lines_above):
+    """(sibling, parent) for a line at `indent`: the match of the nearest
+    typed item above at the same indent (looking past deeper, nested lines),
+    or else of the shallower typed item it is nested under. At most one is
+    set; both are None if a plain line or blank line comes first."""
     width = _indent_width(indent)
     for i, line in enumerate(lines_above):
         if i >= _SIBLING_LOOKBACK:
             break
-        m = _TYPED_ITEM_RE.match(line)
-        line_width = _indent_width(line[:len(line) - len(line.lstrip(" \t"))])
+        line_width = _line_indent_width(line)
         if line.strip() and line_width > width:
             continue   # a nested item or its text — keep looking up
-        if m and line_width == width:
-            return m
-        return None
-    return None
+        m = _TYPED_ITEM_RE.match(line)
+        if m is None:
+            break
+        return (m, None) if line_width == width else (None, m)
+    return None, None
+
+
+def _item_above(indent: str, lines_above):
+    """Match of the nearest typed item above at the same indent, or None."""
+    return _level_context(indent, lines_above)[0]
 
 
 def renest_prefix(line: str, deeper: bool, lines_above=()):
@@ -309,7 +331,113 @@ class NoteTextEdit(QTextEdit):
                         and not (mods & Qt.KeyboardModifier.ShiftModifier)))):
                 return
 
+        # Deleting (Backspace, Delete, Cut) can remove whole items, leaving a
+        # gap in the numbering. Let Qt delete, then close the gap — folded
+        # into the deletion's undo step so one Ctrl+Z restores both.
+        if (key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete)
+                or event.matches(QKeySequence.StandardKey.Cut)):
+            super().keyPressEvent(event)
+            after = self.textCursor()
+            if after.currentList() is None:
+                line_start, _, _ = self._typed_line(after)
+                after.joinPreviousEditBlock()
+                self._renumber_level(after.block(), line_start)
+                after.endEditBlock()
+            return
+
         super().keyPressEvent(event)
+
+    # -- typed-list renumbering ---------------------------------------------
+
+    @staticmethod
+    def _line_text(block, line_start: int) -> str:
+        text = block.text()
+        end = text.find(_LINE_SEPARATOR, line_start)
+        return text[line_start:] if end == -1 else text[line_start:end]
+
+    @staticmethod
+    def _lines_below(block, line_start: int):
+        """(block, line_start) of each line after the given one, top-down.
+        Read lazily from the document, so the caller may edit the line it was
+        just handed before asking for the next."""
+        while True:
+            end = block.text().find(_LINE_SEPARATOR, line_start)
+            if end != -1:
+                line_start = end + 1
+            else:
+                block = block.next()
+                if not block.isValid():
+                    return
+                line_start = 0
+            yield block, line_start
+
+    def _renumber_level(self, block, line_start: int):
+        """Renumber the numbered/lettered item on this line and the rest of
+        its level below it so they count on without gaps or repeats.
+
+        The item continues the item above it at its level; the first item
+        nested under another restarts at 1/a/A; a list's first item keeps its
+        own number, so a list deliberately started at "5." stays at 5.
+        Callers own the undo grouping."""
+        m = _TYPED_ITEM_RE.match(self._line_text(block, line_start))
+        if m is None or m.group(2) is None:
+            return   # not a numbered/lettered item — bullets have nothing to fix
+        indent, token, delim = m.group(1), m.group(2), m.group(3)
+        width = _indent_width(indent)
+
+        sibling, parent = _level_context(indent, _lines_above(block, line_start))
+        if (sibling is not None and sibling.group(2) is not None
+                and sibling.group(3) == delim and _same_kind(sibling.group(2), token)):
+            expected = _next_token(sibling.group(2))
+        elif parent is not None:
+            expected = _first_token(token)
+        else:
+            expected = token
+
+        position = (block, line_start)
+        below = self._lines_below(block, line_start)
+        while position is not None:
+            blk, start = position
+            line = self._line_text(blk, start)
+            if line.strip() and _line_indent_width(line) > width:
+                position = next(below, None)
+                continue   # nested under this level — skip, don't stop
+            lm = _TYPED_ITEM_RE.match(line)
+            if (lm is None or _indent_width(lm.group(1)) != width
+                    or lm.group(2) is None or lm.group(3) != delim
+                    or not _same_kind(lm.group(2), token) or expected is None):
+                return   # end of this level's run
+            if lm.group(2) != expected:
+                pos = blk.position() + start + len(lm.group(1))
+                # A caret sitting exactly where the number starts would be
+                # carried past the new digits by Qt; hold it in place.
+                caret = self.textCursor()
+                pin = not caret.hasSelection() and caret.position() == pos
+                edit = QTextCursor(self.document())
+                edit.setPosition(pos)
+                edit.setPosition(pos + len(lm.group(2)), QTextCursor.MoveMode.KeepAnchor)
+                edit.insertText(expected, self._line_format(blk, start))
+                if pin:
+                    caret.setPosition(pos)
+                    self.setTextCursor(caret)
+            expected = _next_token(expected)
+            position = next(below, None)
+
+    def _renumber_after_move(self, block, line_start: int, old_width: int):
+        """After the item on this line changed level: renumber its new level,
+        then the level it left — the first line below back at the old width,
+        unless a shallower line ends that level first."""
+        self._renumber_level(block, line_start)
+        for blk, start in self._lines_below(block, line_start):
+            line = self._line_text(blk, start)
+            if not line.strip():
+                return
+            line_width = _line_indent_width(line)
+            if line_width > old_width:
+                continue
+            if line_width == old_width:
+                self._renumber_level(blk, start)
+            return
 
     @staticmethod
     def _typed_line(cursor: QTextCursor):
@@ -332,19 +460,22 @@ class NoteTextEdit(QTextEdit):
         probe.setPosition(block.position() + line_start + 1)
         return probe.charFormat()
 
-    def _replace_prefix(self, cursor, line_start, prefix_len, new_prefix):
-        """Swap the marker at the start of the cursor's line for `new_prefix`,
-        keeping the cursor at the same spot in the item's text."""
+    def _move_item(self, cursor, line_start, prefix_len, new_prefix):
+        """Swap the marker of the item on the cursor's line for `new_prefix`
+        (which puts it on another level), keeping the cursor at the same spot
+        in the item's text, then renumber both levels. One undo step."""
         block = cursor.block()
         base = block.position() + line_start
+        old_width = _line_indent_width(self._line_text(block, line_start))
         text_offset = max(0, cursor.position() - base - prefix_len)
         fmt = self._line_format(block, line_start)
         cursor.beginEditBlock()
         cursor.setPosition(base)
         cursor.setPosition(base + prefix_len, QTextCursor.MoveMode.KeepAnchor)
         cursor.insertText(new_prefix, fmt)
-        cursor.endEditBlock()
         cursor.setPosition(base + len(new_prefix) + text_offset)
+        self._renumber_after_move(block, line_start, old_width)
+        cursor.endEditBlock()
         self.setTextCursor(cursor)
 
     def _continue_typed_list(self, cursor: QTextCursor) -> bool:
@@ -364,7 +495,7 @@ class NoteTextEdit(QTextEdit):
             # by dropping the marker and staying on the line.
             outer = renest_prefix(line, False, _lines_above(block, line_start))
             if outer is not None:
-                self._replace_prefix(cursor, line_start, prefix_len, outer[1])
+                self._move_item(cursor, line_start, prefix_len, outer[1])
             else:
                 base = block.position()
                 cursor.setPosition(base + line_start)
@@ -382,6 +513,8 @@ class NoteTextEdit(QTextEdit):
         cursor.insertBlock()
         cursor.insertText(next_prefix, marker_fmt)
         cursor.setCharFormat(typing_fmt)
+        # The new item now holds the next number; push the ones below along.
+        self._renumber_level(cursor.block(), 0)
         cursor.endEditBlock()
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
@@ -396,7 +529,7 @@ class NoteTextEdit(QTextEdit):
             # Shift+Tab on a top-level item: nothing to do, but still ours —
             # Qt would otherwise move keyboard focus out of the note.
             return _TYPED_ITEM_RE.match(line) is not None
-        self._replace_prefix(cursor, line_start, *found)
+        self._move_item(cursor, line_start, *found)
         return True
 
     def insertFromMimeData(self, source):
@@ -2500,7 +2633,7 @@ class AboutDialog(QDialog):
             btn = QPushButton(label)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             if accent:
-                btn.setStyleSheet("color: #d1495b; font-weight: 600;")
+                btn.setStyleSheet("color: #1f8a4c; font-weight: 600;")
                 btn.setToolTip("Support development on Patreon")
             btn.clicked.connect(
                 lambda _checked=False, u=url: QDesktopServices.openUrl(QUrl(u))
