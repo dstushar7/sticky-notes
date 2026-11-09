@@ -5,11 +5,9 @@ import sys
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction, QGuiApplication
-from PyQt6.QtCore import QSettings, QTimer
-from .note_window import (
-    StickyNote, SettingsDialog, AboutDialog, ShortcutsDialog, ReceiveDialog,
-    default_note_size,
-)
+from PyQt6.QtCore import QSettings, QTimer, Qt
+from .note_window import StickyNote, default_note_size
+from .chrome import NotesHub, SettingsWindow, ReceiveDialog, Toast
 from . import __version__
 from . import autostart
 from . import utils
@@ -38,10 +36,13 @@ class TrayManager:
         self.app = app
         self.open_notes = {}
         self._settings_dialog = None
-        self._about_dialog = None
-        self._shortcuts_dialog = None
+        self._hub = None
         self._receive_dialog = None
         self._receive_anchor_id = None   # note the dialog was opened from
+        # Undo for the most recent delete: the note's saved QSettings values,
+        # held in memory only (see _handle_note_deletion).
+        self._undo_snapshot = None
+        self._undo_toast = None
 
         self.app.setQuitOnLastWindowClosed(False)
         # app.quit() does not call closeEvent on individual windows, so any
@@ -142,15 +143,19 @@ class TrayManager:
         # state — Ctrl+B/I/U/Shift+S applied formatting but couldn't toggle
         # it back. HTML gives every character an explicit char format so
         # the toggle is well-defined from the first press.
+        # A checklist the user ticks off by trying each thing — the hidden
+        # gestures are learned by doing them. <li class="unchecked"> loads as
+        # a real checklist item (the same format notes are saved in).
         body = (
-            "<p>A few quick tips:</p>"
+            "<p>A few things worth knowing. Tick them off as you try them:</p>"
             "<ul>"
-            "<li>Double-click the title bar to collapse to a pill</li>"
-            "<li>Ctrl+B, Ctrl+I, Ctrl+U for bold, italic, underline</li>"
-            "<li>Click the + button to add another note</li>"
-            "<li>Click ••• to switch themes, share, or delete</li>"
+            '<li class="unchecked">Click the title above to rename this note</li>'
+            '<li class="unchecked">Double-click the empty part of the bar to fold the note away</li>'
+            '<li class="unchecked">Start a line with 1. or - and press Enter to keep the list going</li>'
+            '<li class="unchecked">Open ••• for colours, opacity and sharing</li>'
             "</ul>"
-            "<p>Click the title to rename. Edit or delete this note whenever.</p>"
+            "<p>Your notes live in the tray icon at the top of the screen. "
+            "Delete this note whenever you like.</p>"
         )
         self._create_new_note(
             title="Welcome to Sticky Notes",
@@ -160,7 +165,7 @@ class TrayManager:
 
     # Welcome and What's-new notes: sized so their text fits without scrolling
     # (the default new-note size clips most of the lines).
-    _ANNOUNCEMENT_SIZE = (460, 380)
+    _ANNOUNCEMENT_SIZE = (460, 440)
 
     def _show_whats_new(self, settings: QSettings, skip: bool):
         """One-time note after upgrading to a feature release (whats_new.py).
@@ -207,88 +212,71 @@ class TrayManager:
         self.tray_icon.show()
 
     def _rebuild_menu(self):
-        """(Re)build the tray menu. Note list lives under a 'Show Note' submenu
-        so the main menu stays short; the submenu itself shows newest-edited
-        first and is capped by TRAY_MENU_NOTE_LIMIT."""
+        """(Re)build the tray menu, grouped by job: make and find notes, the
+        most recently edited notes, then Settings and Quit. Rebuilt every
+        time it opens so titles and order are always current."""
         self.menu.clear()
+        ink = utils.chrome_palette()["text"]
 
-        new_note_action = QAction("New Note", parent=self.menu)
-        new_note_action.triggered.connect(lambda _checked=False: self._create_new_note())
-        self.menu.addAction(new_note_action)
+        def add(text, icon, slot):
+            action = QAction(text, parent=self.menu)
+            if icon:
+                action.setIcon(utils.line_icon(icon, ink, 16))
+            action.triggered.connect(lambda _checked=False: slot())
+            self.menu.addAction(action)
+            return action
 
-        receive_action = QAction("Receive Note…", parent=self.menu)
-        receive_action.triggered.connect(lambda _checked=False: self._show_receive_dialog())
-        self.menu.addAction(receive_action)
-
-        show_all_action = QAction("Show All Notes", parent=self.menu)
-        show_all_action.triggered.connect(self._show_all_notes)
-        self.menu.addAction(show_all_action)
-
-        # "Show Note ▶" submenu — Qt renders the arrow automatically.
-        show_note_menu = self.menu.addMenu("Show Note")
-        self._populate_show_note_submenu(show_note_menu)
+        add("New note", "plus", self._create_default_note)
+        add("All notes…", "grid", self._show_hub)
+        add("Bring all to front", "front", self._show_all_notes)
+        add("Receive a note…", "receive", self._show_receive_dialog)
 
         self.menu.addSeparator()
-        settings_action = QAction("Settings", parent=self.menu)
-        settings_action.triggered.connect(self._show_settings)
-        self.menu.addAction(settings_action)
-
-        # Sits between Settings and About, the conventional slot for a reference
-        # entry: Settings changes things, this only explains them.
-        shortcuts_action = QAction("Keyboard Shortcuts", parent=self.menu)
-        shortcuts_action.triggered.connect(self._show_shortcuts)
-        self.menu.addAction(shortcuts_action)
-
-        about_action = QAction("About Sticky Notes", parent=self.menu)
-        about_action.triggered.connect(self._show_about)
-        self.menu.addAction(about_action)
-
-        self.menu.addSeparator()
-        quit_action = QAction("Quit", parent=self.menu)
-        quit_action.triggered.connect(self.app.quit)
-        self.menu.addAction(quit_action)
-
-    def _populate_show_note_submenu(self, submenu):
-        """Fill the 'Show Note' submenu with one entry per open note, sorted
-        by last_edited descending. Empty state shows a single disabled hint."""
-        if not self.open_notes:
-            empty = QAction("(no saved notes)", parent=submenu)
+        recent = sorted(self.open_notes.values(), key=lambda n: n.last_edited or "", reverse=True)
+        if recent:
+            header = QAction("Recent", parent=self.menu)
+            header.setEnabled(False)
+            self.menu.addAction(header)
+            for note in recent[: config.TRAY_MENU_RECENT_COUNT]:
+                title = note.title or config.DEFAULT_NOTE_TITLE
+                # Defensive elide so a rogue long title can't blow out the menu.
+                if len(title) > config.MAX_TITLE_LENGTH:
+                    title = title[: config.MAX_TITLE_LENGTH - 1] + "…"
+                action = QAction(utils.color_dot_icon(utils.get_theme(note.theme_name)["bg"]), title, self.menu)
+                # Bind note_id at lambda-creation time so the closure doesn't
+                # capture the loop variable's final value.
+                action.triggered.connect(lambda _checked=False, nid=note.note_id: self._focus_note(nid))
+                self.menu.addAction(action)
+        else:
+            empty = QAction("No notes yet", parent=self.menu)
             empty.setEnabled(False)
-            submenu.addAction(empty)
-            return
+            self.menu.addAction(empty)
 
-        notes = sorted(
-            self.open_notes.values(),
-            key=lambda n: n.last_edited or "",
-            reverse=True,
-        )
-        cap = max(0, int(config.TRAY_MENU_NOTE_LIMIT))
-        shown = notes[:cap] if cap else notes
-        for note in shown:
-            title = note.title or config.DEFAULT_NOTE_TITLE
-            # Defensive elide so a rogue long title can't blow out the menu.
-            if len(title) > config.MAX_TITLE_LENGTH:
-                title = title[: config.MAX_TITLE_LENGTH - 1] + "…"
-            action = QAction(title, parent=submenu)
-            # Bind note_id at lambda-creation time so the closure doesn't
-            # capture the loop variable's final value.
-            action.triggered.connect(
-                lambda _checked=False, nid=note.note_id: self._focus_note(nid)
-            )
-            submenu.addAction(action)
-        hidden = len(notes) - len(shown)
-        if hidden > 0:
-            more = QAction(f"+{hidden} more…", parent=submenu)
-            more.setEnabled(False)
-            submenu.addAction(more)
+        self.menu.addSeparator()
+        add("Settings…", "gear", self._show_settings)
+        add("Quit", "power", self.app.quit)
 
     def _focus_note(self, note_id: str):
         note = self.open_notes.get(note_id)
         if note is None:
             return
+        if note._is_collapsed:
+            note.toggle_collapse()
         note.show()
         note.raise_()
         note.activateWindow()
+        note.flash()
+
+    def _default_theme(self) -> str:
+        """Colour for notes made from the tray / All notes (Settings → General).
+        Unset on every pre-v4 install, which means the old default."""
+        theme = QSettings(config.ORG_NAME, config.APP_NAME).value(
+            config.SETTING_DEFAULT_THEME, config.DEFAULT_THEME
+        )
+        return theme if theme in config.THEMES else config.DEFAULT_THEME
+
+    def _create_default_note(self):
+        self._create_new_note(theme=self._default_theme())
 
     def _create_new_note(
         self,
@@ -300,17 +288,20 @@ class TrayManager:
         title=None,
         last_edited=None,
         pinned=False,
+        opacity=config.OPACITY_MAX,
     ):
         theme = theme or config.DEFAULT_THEME
         note = StickyNote(
             note_id, content, geometry_data, theme, collapsed, title, last_edited,
-            pinned, self._hide_from_dock_enabled(),
+            pinned, self._hide_from_dock_enabled(), opacity=opacity,
         )
         note.noteDeleted.connect(self._handle_note_deletion)
         note.newNoteRequested.connect(self._new_note_from_signal)
         note.receiveRequested.connect(self._show_receive_dialog)
         note.show()
         self.open_notes[note.note_id] = note
+        self._refresh_hub()
+        return note
 
         # Mutter ignores client-requested window positions during its
         # initial placement phase on Wayland autostart launches — xcb
@@ -321,44 +312,43 @@ class TrayManager:
         if _AUTOSTART_ON_WAYLAND and geometry_data is not None:
             QTimer.singleShot(2000, note._reapply_initial_position)
 
-    def _new_note_from_signal(self, theme_name: str):
-        """Slot for StickyNote.newNoteRequested — creates note in same theme."""
-        self._create_new_note(theme=theme_name)
+    def _new_note_from_signal(self, theme_name: str, opacity: int):
+        """Slot for StickyNote.newNoteRequested — the + on a note makes a
+        sibling in the same colour and opacity."""
+        self._create_new_note(theme=theme_name, opacity=opacity)
 
-    def _show_settings(self):
-        # Reuse the existing dialog if it's already open so multiple clicks
+    def _show_settings(self, tab: str = "general"):
+        # Reuse the existing window if it's already open so multiple clicks
         # don't stack windows.
         if self._settings_dialog is not None and self._settings_dialog.isVisible():
+            self._settings_dialog.show_tab(tab)
             self._settings_dialog.raise_()
             self._settings_dialog.activateWindow()
             return
-        dlg = SettingsDialog()
-        dlg.hideFromDockChanged.connect(self._apply_hide_from_dock)
-        dlg.finished.connect(lambda _r: setattr(self, "_settings_dialog", None))
-        self._settings_dialog = dlg
-        dlg.show()
+        win = SettingsWindow(tab)
+        win.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        win.hideFromDockChanged.connect(self._apply_hide_from_dock)
+        win.destroyed.connect(lambda *_: setattr(self, "_settings_dialog", None))
+        self._settings_dialog = win
+        win.show()
 
-    def _show_about(self):
-        # Same reuse-once pattern as Settings — repeated clicks just refocus.
-        if self._about_dialog is not None and self._about_dialog.isVisible():
-            self._about_dialog.raise_()
-            self._about_dialog.activateWindow()
+    def _show_hub(self):
+        if self._hub is not None and self._hub.isVisible():
+            self._hub.refresh()
+            self._hub.raise_()
+            self._hub.activateWindow()
             return
-        dlg = AboutDialog()
-        dlg.finished.connect(lambda _r: setattr(self, "_about_dialog", None))
-        self._about_dialog = dlg
-        dlg.show()
+        hub = NotesHub(lambda: list(self.open_notes.values()))
+        hub.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        hub.noteChosen.connect(self._focus_note)
+        hub.newNoteRequested.connect(self._create_default_note)
+        hub.destroyed.connect(lambda *_: setattr(self, "_hub", None))
+        self._hub = hub
+        hub.show()
 
-    def _show_shortcuts(self):
-        # Same reuse-once pattern as Settings and About.
-        if self._shortcuts_dialog is not None and self._shortcuts_dialog.isVisible():
-            self._shortcuts_dialog.raise_()
-            self._shortcuts_dialog.activateWindow()
-            return
-        dlg = ShortcutsDialog()
-        dlg.finished.connect(lambda _r: setattr(self, "_shortcuts_dialog", None))
-        self._shortcuts_dialog = dlg
-        dlg.show()
+    def _refresh_hub(self):
+        if self._hub is not None and self._hub.isVisible():
+            self._hub.refresh()
 
     def _show_receive_dialog(self, anchor_note_id=None):
         """Open Receive. `anchor_note_id` is the note whose ••• panel it came
@@ -371,8 +361,9 @@ class TrayManager:
             self._receive_dialog.activateWindow()
             return
         dlg = ReceiveDialog()
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dlg.noteReceived.connect(self._add_received_note)
-        dlg.finished.connect(lambda _r: setattr(self, "_receive_dialog", None))
+        dlg.destroyed.connect(lambda *_: setattr(self, "_receive_dialog", None))
         self._receive_dialog = dlg
         dlg.show()
 
@@ -385,16 +376,17 @@ class TrayManager:
             geometry = (anchor.x() + offset, anchor.y() + offset, w, h)
         else:
             geometry = self._centered_geometry(w, h)
-        self._create_new_note(
+        note = self._create_new_note(
             content=shared.body_html,
             geometry_data=geometry,
             theme=shared.theme,
             title=shared.title,
         )
+        note.flash()
 
     def _show_all_notes(self):
         if not self.open_notes:
-            self._create_new_note()
+            self._create_default_note()
             return
         for note in self.open_notes.values():
             note.show()
@@ -402,24 +394,81 @@ class TrayManager:
             note.activateWindow()
 
     def _handle_note_deletion(self, note_id: str):
+        """Delete exactly as before — the note's QSettings group is removed
+        right away — but keep a copy of its saved values in memory so the
+        toast's Undo can write them back. Nothing extra is ever stored on
+        disk; quitting during the undo window simply leaves it deleted."""
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
+        settings.beginGroup(note_id)
+        snapshot = {key: settings.value(key) for key in settings.allKeys()}
+        settings.endGroup()
         settings.remove(note_id)
         settings.endGroup()
 
         self.open_notes.pop(note_id, None)
+        self._refresh_hub()
         print(f"✓ Note {note_id} deleted")
+
+        self._undo_snapshot = (note_id, snapshot) if snapshot else None
+        if self._undo_toast is not None:
+            self._undo_toast.close()
+        if self._undo_snapshot is None:
+            return
+        toast = Toast("Note deleted", "Undo", config.UNDO_DELETE_MS)
+        toast.actionTriggered.connect(self._undo_delete)
+        toast.destroyed.connect(lambda *_: self._on_undo_toast_gone(toast))
+        self._undo_toast = toast
+        toast.show_at_bottom()
+
+    def _on_undo_toast_gone(self, toast):
+        if self._undo_toast is toast:
+            self._undo_toast = None
+            self._undo_snapshot = None
+
+    def _undo_delete(self):
+        """Write the deleted note's values back exactly as they were and open
+        it again through the normal load path."""
+        if self._undo_snapshot is None:
+            return
+        note_id, snapshot = self._undo_snapshot
+        self._undo_snapshot = None
+        if note_id in self.open_notes:
+            return
+        settings = QSettings(config.ORG_NAME, config.APP_NAME)
+        settings.beginGroup("notes")
+        settings.beginGroup(note_id)
+        for key, value in snapshot.items():
+            settings.setValue(key, value)
+        settings.endGroup()
+        settings.endGroup()
+        settings.sync()
+        note = self._load_note(settings, note_id)
+        if note is not None:
+            note.flash()
 
     def _load_notes(self):
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
-        for note_id in settings.childGroups():
+        note_ids = settings.childGroups()
+        settings.endGroup()
+        for note_id in note_ids:
+            self._load_note(settings, note_id)
+
+    def _load_note(self, settings: QSettings, note_id: str):
+        """Open one saved note. Read-only with respect to storage: every key
+        is read with the same default it always had, so notes saved by any
+        earlier version load exactly as before."""
+        settings.beginGroup("notes")
+        try:
             content   = settings.value(f"{note_id}/content", "")
             theme     = settings.value(f"{note_id}/theme", config.DEFAULT_THEME)
             collapsed = settings.value(f"{note_id}/collapsed", False, type=bool)
             # New in this schema. Defaults False, so every existing note loads
             # exactly as before — nothing becomes pinned on upgrade.
             pinned    = settings.value(f"{note_id}/pinned", False, type=bool)
+            # New in v4. Absent on every older note, which means fully opaque.
+            opacity   = settings.value(f"{note_id}/opacity", config.OPACITY_MAX)
 
             # New fields in this schema. Both default to None so legacy notes
             # get the "smart default" behavior in StickyNote.__init__ —
@@ -440,8 +489,9 @@ class TrayManager:
                 if None not in (x, y, w, h):
                     geometry = (int(x), int(y), int(w), int(h))
 
-            self._create_new_note(
-                note_id, content, geometry, theme, collapsed, title, last_edited,
-                pinned,
-            )
-        settings.endGroup()
+        finally:
+            settings.endGroup()
+        return self._create_new_note(
+            note_id, content, geometry, theme, collapsed, title, last_edited,
+            pinned, opacity=opacity,
+        )

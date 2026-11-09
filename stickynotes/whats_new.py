@@ -25,6 +25,23 @@ class Release(NamedTuple):
 
 
 RELEASES = {
+    "4.0.0": Release(
+        title="What's new in 4.0",
+        body=(
+            "<p><b>Sticky Notes got a fresh coat of paint.</b> "
+            "Your notes are all here, exactly as you left them.</p>"
+            "<ul>"
+            "<li><b>Calmer notes:</b> the formatting buttons only appear on the "
+            "note you're typing in</li>"
+            "<li><b>Opacity:</b> ••• has a slider to make a note see-through. "
+            "Hover over it and it turns solid again</li>"
+            "<li><b>All notes</b> in the tray menu: search and find any note</li>"
+            "<li>Deleted something by mistake? Hit <b>Undo</b></li>"
+            "<li>Settings, shortcuts and About now live in one window</li>"
+            "</ul>"
+            "<p>You can delete this note.</p>"
+        ),
+    ),
     "3.6.0": Release(
         title="What's new in 3.6",
         body=(
