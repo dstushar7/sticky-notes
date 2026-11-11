@@ -8,6 +8,10 @@
 # looks. It links per-snap entries into the real ~/.config/autostart at
 # session start, so the same code path works for both source and snap
 # builds without any interface plug.
+#
+# Under Flatpak the sandbox's ~/.config is private, so the file written here
+# only records the preference; login autostart itself is requested from the
+# host via the XDG Background portal (is_flatpak_runtime / set_enabled).
 
 import os
 import sys
@@ -29,6 +33,69 @@ def is_snap_runtime() -> bool:
     rather than trusting any non-empty value.
     """
     return os.environ.get("SNAP_NAME") == _OWN_SNAP_NAME
+
+
+FLATPAK_APP_ID = "com.dabobrotosarkar.StickyNotes"
+
+
+def is_flatpak_runtime() -> bool:
+    """True iff we're running as our own Flatpak.
+
+    Inside the sandbox ~/.config is private to the app, so the autostart
+    entry this module writes is never seen by the desktop session. Login
+    autostart has to be requested from the host through the XDG Background
+    portal instead (see _request_portal_autostart).
+    """
+    return os.environ.get("FLATPAK_ID") == FLATPAK_APP_ID
+
+
+def _request_portal_autostart(enabled: bool) -> None:
+    """Ask the XDG Background portal to add or remove our login autostart.
+
+    The portal writes (or deletes) the real entry in the host's
+    ~/.config/autostart, running `flatpak run ... stickynotes --autostart`.
+
+    Raises OSError when the desktop can't do it — e.g. XFCE without
+    xdg-desktop-portal-xapp has no Background portal at all — so callers
+    keep the switch off and say why, instead of claiming autostart is on.
+    The call is synchronous but quick: the portal answers at once with a
+    request handle, and the desktop applies (or asks about) it afterwards.
+    """
+    try:
+        from PyQt6.QtCore import QMetaType
+        from PyQt6.QtDBus import QDBus, QDBusArgument, QDBusConnection, QDBusMessage
+    except ImportError as e:
+        raise OSError(f"D-Bus support is missing ({e})") from e
+    bus = QDBusConnection.sessionBus()
+    if not bus.isConnected():
+        raise OSError("no connection to the desktop session")
+    # Options are a{sv}: PyQt already wraps each dict value in a variant, so
+    # pass plain values (wrapping them in QDBusVariant sends 'v' inside 'v',
+    # which the portal rejects). 'commandline' must be an array of strings
+    # ('as'); a plain Python list would go out as 'av', hence QDBusArgument.
+    commandline = QDBusArgument()
+    commandline.add(["stickynotes", "--autostart"], QMetaType.Type.QStringList.value)
+    options = {
+        "reason": "Open Sticky Notes quietly in the tray when you log in",
+        "autostart": bool(enabled),
+        "commandline": commandline,
+        "dbus-activatable": False,
+    }
+    msg = QDBusMessage.createMethodCall(
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Background",
+        "RequestBackground",
+    )
+    msg.setArguments(["", options])
+    reply = bus.call(msg, QDBus.CallMode.Block, 2000)
+    if reply.type() == QDBusMessage.MessageType.ErrorMessage:
+        if reply.errorName() in ("org.freedesktop.DBus.Error.UnknownMethod",
+                                 "org.freedesktop.DBus.Error.UnknownInterface",
+                                 "org.freedesktop.DBus.Error.ServiceUnknown"):
+            raise OSError("this desktop can't start Flatpak apps at login. "
+                          "Add Sticky Notes to your startup applications instead")
+        raise OSError(reply.errorMessage() or reply.errorName())
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +203,23 @@ def is_enabled() -> bool:
 
 
 def set_enabled(enabled: bool) -> None:
-    """Enable or disable the autostart entry. Raises OSError on I/O failure."""
+    """Enable or disable the autostart entry. Raises OSError on I/O failure.
+
+    Under Flatpak the local file is only our own record of the preference
+    (it lives in the sandbox, invisible to the session); the real login
+    entry is requested from the host through the Background portal.
+    """
+    if is_flatpak_runtime():
+        try:
+            _request_portal_autostart(enabled)
+        except OSError:
+            if enabled:
+                # Drop any earlier record too, so the switch never shows
+                # "on" for an autostart the desktop isn't going to do.
+                _desktop_path().unlink(missing_ok=True)
+                raise
+            # Disabling: there is nothing on the host to remove if the
+            # portal is missing, so still clear our own record below.
     path = _desktop_path()
     if enabled:
         contents = (

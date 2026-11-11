@@ -43,10 +43,18 @@ def _wait_for_xwayland_on_autostart():
     HEARTBEAT_SEC = 5.0
     POLL_SEC = 0.1
 
+    # Wait for the X socket of the display we were actually given, not :0.
+    # XWayland is :1 when a login screen's X server already holds :0 (KDE
+    # with SDDM, for one), and inside the Flatpak sandbox the host display is
+    # always remapped to :99 — waiting on X0 there stalls for the full cap.
+    display = os.environ.get("DISPLAY", "")
+    number = display.rpartition(":")[2].split(".")[0] if ":" in display else ""
+    socket_path = f"/tmp/.X11-unix/X{number if number.isdigit() else '0'}"
+
     waited = 0.0
     last_log = 0.0
     while waited < HARD_CAP_SEC:
-        if os.path.exists("/tmp/.X11-unix/X0"):
+        if os.path.exists(socket_path):
             time.sleep(0.5)  # let XWayland finish accepting connections
             print(
                 f"[stickynotes] XWayland ready after {waited:.1f}s",
@@ -75,6 +83,7 @@ from PyQt6.QtWidgets import QApplication
 from stickynotes.tray_manager import TrayManager
 from stickynotes import config
 from stickynotes import utils
+from stickynotes import autostart
 
 
 def main():
@@ -97,7 +106,10 @@ def main():
     app.setOrganizationName(config.ORG_NAME)
     app.setApplicationName(config.APP_NAME)
     app.setApplicationDisplayName("Sticky Notes")
-    app.setDesktopFileName("stickynotes")
+    # Must match the installed .desktop file's name: "stickynotes" for the
+    # snap and source builds, the app ID for the Flatpak.
+    app.setDesktopFileName(
+        autostart.FLATPAK_APP_ID if autostart.is_flatpak_runtime() else "stickynotes")
 
     # Style tooltips app-wide before any window exists, so the first tooltip
     # shown is already themed. Currently the only app-level stylesheet — if

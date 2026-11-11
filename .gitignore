@@ -216,3 +216,7 @@ stage/
 
 # Claude
 .claude/
+# Flatpak local builds
+.flatpak-builder/
+flatpak/build-dir/
+flatpak/repo/

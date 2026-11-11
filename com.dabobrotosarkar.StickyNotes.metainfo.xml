@@ -8,17 +8,12 @@
   It is the app's permanent name across every distribution channel — treat it
   as immutable once published, since changing it orphans installed copies.
 
-  Kept in the repo root, and in sync with snap/snapcraft.yaml, so there is one
-  public record of what the canonical ID is and who publishes it.
+  The Flatpak installs this file as /app/share/metainfo/<id>.metainfo.xml next
+  to flatpak/<id>.desktop. The snap keeps its own snap/gui/stickynotes.desktop.
 
-  Before any Flathub submission, two things here need to change:
-    - <launchable> and the desktop file must be renamed to match <id>
-      (Flathub requires com.dabobrotosarkar.StickyNotes.desktop). The snap
-      currently ships gui/stickynotes.desktop, and run_stickynotes.py calls
-      setDesktopFileName("stickynotes") to match, so renaming is a
-      coordinated change across all three — not a one-liner.
-    - <screenshots> must be filled in with reachable https URLs; Flathub
-      rejects submissions without at least one screenshot.
+  Screenshot URLs point at a release tag so they never change under the store.
+  When cutting a release: add a <release> entry here, and if the screenshots
+  change, move their URLs to the new tag.
 -->
 <component type="desktop-application">
   <id>com.dabobrotosarkar.StickyNotes</id>
@@ -39,24 +34,25 @@
       Sticky notes. That's it. That's the app. No cloud, no account, no "AI note
       assistant," no spatial canvas you have to pan around just to find your
       grocery list. Just outrageously pretty notes that stick to your desktop and
-      then get out of your way — the whole thing about 26 MB installed.
+      then get out of your way.
     </p>
     <p>Nice to look at:</p>
     <ul>
       <li>Frameless and rounded with soft drop shadows</li>
-      <li>Seven hand-picked themes, including a charcoal dark mode</li>
-      <li>Glass-style floating buttons that quietly fade back when unused</li>
-      <li>Collapse any note to a tidy pill with a double-click</li>
+      <li>Seven hand-picked colours, including a charcoal dark mode</li>
+      <li>Calm by default: the formatting toolbar only shows on the note you are typing in</li>
+      <li>See-through notes: fade a note's paper down to 50% while the text stays solid</li>
+      <li>Collapse any note to a tidy bar with a double-click; checklists still show what is left</li>
     </ul>
     <p>Nice to use:</p>
     <ul>
-      <li>Rich text: bold, italic, underline, strikethrough, nested bullet lists</li>
-      <li>Real keyboard shortcuts throughout</li>
-      <li>Notes name themselves from your first line until you decide otherwise</li>
-      <li>Drag them anywhere, resize from any edge, open as many as you like</li>
-      <li>Lives in the system tray with your latest notes a click away</li>
-      <li>Auto-launches at login, quietly restoring your notes</li>
-      <li>A two-click delete, so you never nuke a note by flinching</li>
+      <li>Rich text: bold, italic, underline, strikethrough, bullet lists and checklists</li>
+      <li>Lists that keep themselves going: type "1." or "-" and Enter starts the next item, renumbered for you</li>
+      <li>Keep a note on top of every other window</li>
+      <li>All notes: search every note and filter by colour</li>
+      <li>Share a note as a short bit of text; the other person previews it before adding it</li>
+      <li>Undo after deleting a note</li>
+      <li>Lives in the system tray and quietly restores your notes at login</li>
     </ul>
     <p>
       Your notes live on your machine, in a plain local config file. No servers,
@@ -64,9 +60,9 @@
     </p>
   </description>
 
-  <launchable type="desktop-id">stickynotes.desktop</launchable>
+  <launchable type="desktop-id">com.dabobrotosarkar.StickyNotes.desktop</launchable>
 
-  <url type="homepage">https://dabobrotosarkar.com/</url>
+  <url type="homepage">https://dabobrotosarkar.com/sticky-notes</url>
   <url type="bugtracker">https://github.com/dstushar7/sticky-notes/issues</url>
   <url type="vcs-browser">https://github.com/dstushar7/sticky-notes</url>
   <url type="donation">https://www.patreon.com/dstushar7/posts/sticky-note-164511062</url>
@@ -80,6 +76,8 @@
     <keyword>sticky</keyword>
     <keyword>memo</keyword>
     <keyword>reminder</keyword>
+    <keyword>checklist</keyword>
+    <keyword>todo</keyword>
     <keyword>desktop</keyword>
     <keyword>postit</keyword>
   </keywords>
@@ -102,22 +100,58 @@
     <color type="primary" scheme_preference="dark">#4A4A4A</color>
   </branding>
 
-  <!--
-    Screenshots are required for Flathub. Add entries in this shape, pointing at
-    stable https URLs (raw.githubusercontent.com on a tag works fine):
-
-    <screenshots>
-      <screenshot type="default">
-        <image>https://.../notes-overview.png</image>
-        <caption>Several notes in different themes on a desktop</caption>
-      </screenshot>
-    </screenshots>
-  -->
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/dstushar7/sticky-notes/v4.0.1/Screenshots/v4-1-desktop.png</image>
+      <caption>Notes in seven colours, with a numbered list, a pinned checklist and a collapsed note</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/dstushar7/sticky-notes/v4.0.1/Screenshots/v4-2-options-and-opacity.png</image>
+      <caption>Colours, opacity, keep on top and sharing; the text stays solid while the paper fades</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/dstushar7/sticky-notes/v4.0.1/Screenshots/v4-3-tray-menu.png</image>
+      <caption>Everything a click away in the system tray, with your recent notes</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/dstushar7/sticky-notes/v4.0.1/Screenshots/v4-4-all-notes.png</image>
+      <caption>All notes: search every note and filter by colour</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/dstushar7/sticky-notes/v4.0.1/Screenshots/v4-5-receive-a-note.png</image>
+      <caption>Receive a shared note and preview it before adding it</caption>
+    </screenshot>
+  </screenshots>
 
   <releases>
-    <release version="4.0.0" date="2026-11-09" />
-    <release version="3.7.0" date="2026-11-08" />
-    <release version="3.6.0" date="2026-10-04" />
+    <release version="4.0.1" date="2026-11-12">
+      <description>
+        <p>Now on Flathub. In the Flatpak version, starting at login is requested
+        from your desktop, so it works inside the sandbox.</p>
+      </description>
+    </release>
+    <release version="4.0.0" date="2026-11-09">
+      <description>
+        <p>A full redesign:</p>
+        <ul>
+          <li>Calmer notes: the formatting toolbar only shows while you type</li>
+          <li>Per-note opacity</li>
+          <li>All notes window with search and a colour filter</li>
+          <li>Undo after deleting a note</li>
+          <li>A preview before adding a shared note</li>
+        </ul>
+      </description>
+    </release>
+    <release version="3.7.0" date="2026-11-08">
+      <description>
+        <p>Typed lists ("1.", "a.", "-") continue, nest and renumber themselves.</p>
+      </description>
+    </release>
+    <release version="3.6.0" date="2026-10-04">
+      <description>
+        <p>Share a note as a piece of text and receive notes others share with you.</p>
+      </description>
+    </release>
     <release version="3.5.4" date="2026-10-04" />
     <release version="3.5.3" date="2026-10-04" />
     <release version="3.5.2" date="2026-10-01" />

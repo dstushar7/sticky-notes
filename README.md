@@ -12,6 +12,8 @@ Notes save locally and are restored exactly where you left them between sessions
 
 ![Sticky Notes on Ubuntu: seven notes in different colours — a numbered list, a pinned checklist, a collapsed note showing 1/4 progress](Screenshots/v4-1-desktop.png)
 
+▶️ **[Watch the 3-minute demo on YouTube](https://www.youtube.com/watch?v=nbHcZPAiGIM)**
+
 ---
 
 ## 🚀 Features
