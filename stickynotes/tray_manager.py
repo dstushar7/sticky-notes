@@ -1,4 +1,3 @@
-# stickynotes/tray_manager.py
 
 import os
 import sys
@@ -15,10 +14,8 @@ from . import config
 from . import whats_new
 
 
-# Set once at import time: are we in the failing case (snap autostart firing
-# during a Wayland session, where Mutter overrides our window positions during
-# its initial placement phase)? Used to scope the deferred-reapply workaround
-# so manual launches and X11 sessions don't pay the cost.
+# Snap autostart on Wayland: Mutter overrides the first window placement, so saved
+# positions are re-applied once it settles.
 _AUTOSTART_ON_WAYLAND = (
     "--autostart" in sys.argv
     and os.environ.get("XDG_SESSION_TYPE") == "wayland"
@@ -28,8 +25,7 @@ _AUTOSTART_ON_WAYLAND = (
 class TrayManager:
     """Manages the system tray icon and application life cycle."""
 
-    # How far a received note opens from the note Receive was clicked on —
-    # enough to show both title bars, so it's obvious which one is new.
+    # How far a received note opens from the note Receive was opened from.
     _RECEIVED_NOTE_OFFSET = 36
 
     def __init__(self, app: QApplication):
@@ -39,22 +35,18 @@ class TrayManager:
         self._hub = None
         self._receive_dialog = None
         self._receive_anchor_id = None   # note the dialog was opened from
-        # Undo for the most recent delete: the note's saved QSettings values,
-        # held in memory only (see _handle_note_deletion).
+        # Saved values of the last deleted note, in memory only, for Undo.
         self._undo_snapshot = None
         self._undo_toast = None
 
         self.app.setQuitOnLastWindowClosed(False)
-        # app.quit() does not call closeEvent on individual windows, so any
-        # unsaved position/size would be lost. Flush every note before exit.
+        # app.quit() skips closeEvent, so flush every note before exit.
         self.app.aboutToQuit.connect(self._save_all_notes)
 
         self._setup_tray_icon()
         self._load_notes()
 
-        # First-ever launch = no saved notes AND no first-launch flag. Both,
-        # because installs older than the flag only ever set it when they had
-        # no notes — a long-time user with notes may never have it.
+        # First launch = no notes and no flag (old installs only set the flag when empty).
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         is_first_ever = not self.open_notes and not settings.value(
             "first_launch_completed", False, type=bool
@@ -62,27 +54,14 @@ class TrayManager:
 
         self._show_whats_new(settings, skip=is_first_ever)
 
-        # Decide whether to show a starter note when no notes were restored
-        # (a What's-new note counts — it already gives the user something).
-        # Three states map to three behaviors:
-        #   - first launch ever (no QSettings flag yet)  → welcoming note
-        #   - subsequent manual launch with no notes     → blank starter
-        #   - autostart launch with no notes             → silent tray
-        #
-        # The autostart case is the important one: without this gate, every
-        # login on an empty state would flash up an unwanted blank note —
-        # the exact "gets in your way" behavior the app is positioned against.
+        # No notes restored: first launch -> welcome note, manual launch -> blank note,
+        # autostart -> stay quietly in the tray.
         if not self.open_notes:
             is_autostart = "--autostart" in sys.argv
 
             if is_first_ever:
                 self._create_welcome_note()
-                # Default autostart ON for new installs — better UX (the
-                # app is just there at every login without the user having
-                # to discover Settings first). Toggle off any time from
-                # Settings if not wanted. Existing users (flag already
-                # set) keep whatever preference they previously had —
-                # this branch never runs for them.
+                # Autostart defaults to on for new installs.
                 try:
                     autostart.set_enabled(True)
                 except OSError:
@@ -93,12 +72,7 @@ class TrayManager:
 
             settings.setValue("first_launch_completed", True)
 
-        # Self-heal the autostart entry on every launch. If the user enabled
-        # autostart on an older version with a different Exec format (e.g.
-        # before --autostart was added), the file in $SNAP_USER_DATA was
-        # never rewritten by the snap upgrade. Rewriting it here with the
-        # current code's format migrates it forward so the next login uses
-        # the up-to-date desktop entry. No-op when autostart is disabled.
+        # Rewrite the autostart entry on every launch so older formats get migrated.
         if autostart.is_enabled():
             try:
                 autostart.set_enabled(True)
@@ -106,18 +80,8 @@ class TrayManager:
                 pass  # leave the stale file rather than crash on startup
 
     def _hide_from_dock_enabled(self) -> bool:
-        """The effective dock preference for this session.
-
-        Fails SAFE. The stored value is only honoured when there is actually a
-        system tray and we're on xcb; otherwise notes stay visible in the dock.
-        That matters because the tray is the only route back to a dock-hidden
-        app, and Settings itself is opened from the tray — so a user who
-        enabled this and later lost their tray (extension removed, different
-        desktop, switched to native Wayland) would otherwise be locked out of
-        their own notes with no way to undo it.
-
-        The stored value is deliberately left untouched, so the preference
-        comes back on its own once a tray is available again.
+        """The effective dock preference: honoured only with a tray and X11, since the tray is
+        the only way back to hidden notes. The stored value is left untouched.
         """
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         if not settings.value(config.SETTING_HIDE_FROM_DOCK, False, type=bool):
@@ -127,25 +91,14 @@ class TrayManager:
         return QApplication.platformName() == "xcb"
 
     def _apply_hide_from_dock(self, hidden: bool):
-        """Push the preference to every open note. The dock lists an app as
-        running if ANY of its windows is listed, so this only takes effect when
-        all notes agree — which is why the setting is app-global."""
+        """Apply the dock preference to every open note."""
         for note in self.open_notes.values():
             note.set_hidden_from_dock(hidden)
 
     def _create_welcome_note(self):
-        """First-launch onboarding note. Pre-filled with a short tour so a
-        brand-new user discovers the non-obvious features (collapse,
-        keyboard shortcuts, theme switcher) within seconds of install."""
-        # HTML (not plain text). StickyNote routes content starting with '<'
-        # through setHtml, the same load path restored notes use. Loading
-        # via setPlainText was leaving the char format in an unspecified
-        # state — Ctrl+B/I/U/Shift+S applied formatting but couldn't toggle
-        # it back. HTML gives every character an explicit char format so
-        # the toggle is well-defined from the first press.
-        # A checklist the user ticks off by trying each thing — the hidden
-        # gestures are learned by doing them. <li class="unchecked"> loads as
-        # a real checklist item (the same format notes are saved in).
+        """First-launch welcome note with a short tour."""
+        # HTML, so every character gets an explicit format (plain text broke the Ctrl+B/I/U
+        # toggles). The tour is a checklist the user ticks off by trying each thing.
         body = (
             "<p>A few things worth knowing. Tick them off as you try them:</p>"
             "<ul>"
@@ -163,15 +116,12 @@ class TrayManager:
             geometry_data=self._centered_geometry(*self._ANNOUNCEMENT_SIZE),
         )
 
-    # Welcome and What's-new notes: sized so their text fits without scrolling
-    # (the default new-note size clips most of the lines).
+    # Big enough that the text fits without scrolling.
     _ANNOUNCEMENT_SIZE = (460, 440)
 
     def _show_whats_new(self, settings: QSettings, skip: bool):
         """One-time note after upgrading to a feature release (whats_new.py).
-
-        Records the running version either way, so the note never repeats;
-        `skip` is set for first-time users, who get the welcome note instead.
+        Always records the running version; `skip` is set for first-time users.
         """
         last_seen = settings.value(config.SETTING_LAST_SEEN_VERSION, None)
         settings.setValue(config.SETTING_LAST_SEEN_VERSION, __version__)
@@ -203,8 +153,7 @@ class TrayManager:
         self.tray_icon.setToolTip("Sticky Notes")
 
         self.menu = QMenu()
-        # Rebuild the whole menu each time it's shown so the dynamic note
-        # list reflects current titles, last-edited order, and open notes.
+        # Rebuilt on every open so titles and order are current.
         self.menu.aboutToShow.connect(self._rebuild_menu)
         self._rebuild_menu()
 
@@ -212,9 +161,7 @@ class TrayManager:
         self.tray_icon.show()
 
     def _rebuild_menu(self):
-        """(Re)build the tray menu, grouped by job: make and find notes, the
-        most recently edited notes, then Settings and Quit. Rebuilt every
-        time it opens so titles and order are always current."""
+        """(Re)build the tray menu."""
         self.menu.clear()
         ink = utils.chrome_palette()["text"]
 
@@ -243,8 +190,7 @@ class TrayManager:
                 if len(title) > config.MAX_TITLE_LENGTH:
                     title = title[: config.MAX_TITLE_LENGTH - 1] + "…"
                 action = QAction(utils.color_dot_icon(utils.get_theme(note.theme_name)["bg"]), title, self.menu)
-                # Bind note_id at lambda-creation time so the closure doesn't
-                # capture the loop variable's final value.
+                # Bind note_id now, not the loop variable.
                 action.triggered.connect(lambda _checked=False, nid=note.note_id: self._focus_note(nid))
                 self.menu.addAction(action)
         else:
@@ -268,8 +214,7 @@ class TrayManager:
         note.flash()
 
     def _default_theme(self) -> str:
-        """Colour for notes made from the tray / All notes (Settings → General).
-        Unset on every pre-v4 install, which means the old default."""
+        """Colour for notes made from the tray / All notes (the old default if unset)."""
         theme = QSettings(config.ORG_NAME, config.APP_NAME).value(
             config.SETTING_DEFAULT_THEME, config.DEFAULT_THEME
         )
@@ -303,23 +248,17 @@ class TrayManager:
         self._refresh_hub()
         return note
 
-        # Mutter ignores client-requested window positions during its
-        # initial placement phase on Wayland autostart launches — xcb
-        # loads cleanly via XWayland yet our move()/restoreGeometry calls
-        # in __init__ get overridden. Re-asserting position after the
-        # compositor has settled is what makes positions actually stick.
-        # Scoped tight to the failing case; other launch paths skip.
+        # Mutter overrides positions during initial placement on Wayland autostart;
+        # re-applying them once it settles makes them stick.
         if _AUTOSTART_ON_WAYLAND and geometry_data is not None:
             QTimer.singleShot(2000, note._reapply_initial_position)
 
     def _new_note_from_signal(self, theme_name: str, opacity: int):
-        """Slot for StickyNote.newNoteRequested — the + on a note makes a
-        sibling in the same colour and opacity."""
+        """The + on a note: a sibling in the same colour and opacity."""
         self._create_new_note(theme=theme_name, opacity=opacity)
 
     def _show_settings(self, tab: str = "general"):
-        # Reuse the existing window if it's already open so multiple clicks
-        # don't stack windows.
+        # Reuse the open window instead of stacking another.
         if self._settings_dialog is not None and self._settings_dialog.isVisible():
             self._settings_dialog.show_tab(tab)
             self._settings_dialog.raise_()
@@ -351,11 +290,9 @@ class TrayManager:
             self._hub.refresh()
 
     def _show_receive_dialog(self, anchor_note_id=None):
-        """Open Receive. `anchor_note_id` is the note whose ••• panel it came
-        from (None = tray); the received note opens beside that note."""
+        """Open Receive; the received note opens beside `anchor_note_id` (None = tray)."""
         self._receive_anchor_id = anchor_note_id
-        # Same reuse-once pattern as Settings — a second request just refocuses
-        # (and re-anchors to whichever note asked last).
+        # Reuse the open dialog, re-anchored to whichever note asked last.
         if self._receive_dialog is not None and self._receive_dialog.isVisible():
             self._receive_dialog.raise_()
             self._receive_dialog.activateWindow()
@@ -394,10 +331,7 @@ class TrayManager:
             note.activateWindow()
 
     def _handle_note_deletion(self, note_id: str):
-        """Delete exactly as before — the note's QSettings group is removed
-        right away — but keep a copy of its saved values in memory so the
-        toast's Undo can write them back. Nothing extra is ever stored on
-        disk; quitting during the undo window simply leaves it deleted."""
+        """Delete the note's saved group, keeping its values in memory for Undo (never on disk)."""
         settings = QSettings(config.ORG_NAME, config.APP_NAME)
         settings.beginGroup("notes")
         settings.beginGroup(note_id)
@@ -427,8 +361,7 @@ class TrayManager:
             self._undo_snapshot = None
 
     def _undo_delete(self):
-        """Write the deleted note's values back exactly as they were and open
-        it again through the normal load path."""
+        """Restore the deleted note's values and reopen it."""
         if self._undo_snapshot is None:
             return
         note_id, snapshot = self._undo_snapshot
@@ -456,30 +389,22 @@ class TrayManager:
             self._load_note(settings, note_id)
 
     def _load_note(self, settings: QSettings, note_id: str):
-        """Open one saved note. Read-only with respect to storage: every key
-        is read with the same default it always had, so notes saved by any
-        earlier version load exactly as before."""
+        """Open one saved note; every key keeps its old default, so older notes load unchanged."""
         settings.beginGroup("notes")
         try:
             content   = settings.value(f"{note_id}/content", "")
             theme     = settings.value(f"{note_id}/theme", config.DEFAULT_THEME)
             collapsed = settings.value(f"{note_id}/collapsed", False, type=bool)
-            # New in this schema. Defaults False, so every existing note loads
-            # exactly as before — nothing becomes pinned on upgrade.
+            # Absent on notes from before pinning existed: not pinned.
             pinned    = settings.value(f"{note_id}/pinned", False, type=bool)
             # New in v4. Absent on every older note, which means fully opaque.
             opacity   = settings.value(f"{note_id}/opacity", config.OPACITY_MAX)
 
-            # New fields in this schema. Both default to None so legacy notes
-            # get the "smart default" behavior in StickyNote.__init__ —
-            # title is auto-derived from existing body content, and
-            # last_edited will be filled in at first save.
+            # None on older notes: the title comes from the first line, last_edited from the next save.
             title       = settings.value(f"{note_id}/title", None)
             last_edited = settings.value(f"{note_id}/last_edited", None)
 
-            # Prefer the QByteArray-encoded geometry (works on Wayland).
-            # Fall back to (x, y, w, h) ints for notes saved during the
-            # broken intermediate version where we wrote raw coords only.
+            # Encoded geometry (works on Wayland); plain x/y/w/h from an old version as a fallback.
             geometry = settings.value(f"{note_id}/geometry")
             if geometry is None:
                 x = settings.value(f"{note_id}/x")

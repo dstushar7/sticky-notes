@@ -1,8 +1,4 @@
-# stickynotes/richtext.py
-#
-# Rich-text helpers shared by the note editor and Share/Receive. Kept free of
-# widget code so sharing.py can use the sanitiser without importing the note
-# window.
+# Rich-text helpers shared by the note editor and Share/Receive.
 
 from PyQt6.QtGui import (
     QFont, QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument,
@@ -22,26 +18,9 @@ def style_for_indent(indent: int) -> QTextListFormat.Style:
     return _LIST_STYLES[(max(1, indent) - 1) % len(_LIST_STYLES)]
 
 
-# ---------------------------------------------------------------------------
-# Sanitising
-#
-# Rule: incoming rich text may only carry formatting the user could have
-# typed. The format bar offers bold/italic/underline/strike, bullets and
-# checklists — so that is all that survives. Font family and size, text and
-# background colours, line-height, alignment, headings, links, images and
-# tables are dropped, because once inserted there would be no way to remove
-# them from inside the note (e.g. VS Code's dark editor background and
-# monospace font).
-#
-# Applies to pastes (NoteTextEdit.insertFromMimeData) and to received shared
-# notes (sharing.decode_note), so a shared note can never contain anything a
-# paste couldn't.
-#
-# The HTML is REBUILT into a fresh document rather than stripped in place:
-# only what is explicitly copied below gets through, so formats we never
-# thought of (table cell backgrounds, frame borders, white-space: pre) can't
-# leak in.
-# ---------------------------------------------------------------------------
+# Pasted or received rich text keeps only what the user could have typed: B/I/U/S,
+# lists and checklists. The HTML is rebuilt into a fresh document, so formats
+# nobody thought of (cell backgrounds, white-space: pre...) can't leak in.
 _OBJECT_REPLACEMENT_CHAR = "￼"   # stands in for images / inline objects
 _NBSP = " "
 
@@ -52,8 +31,7 @@ def _clean_char_format(src: QTextCharFormat) -> QTextCharFormat:
         fmt.setFontWeight(QFont.Weight.Bold)
     if src.fontItalic():
         fmt.setFontItalic(True)
-    # Links are rendered underlined; once the link itself is dropped that
-    # underline would just be a stray decoration.
+    # Once the link is dropped, its underline would just be a stray decoration.
     if src.fontUnderline() and not src.isAnchor():
         fmt.setFontUnderline(True)
     if src.fontStrikeOut():
@@ -85,8 +63,7 @@ def _rebuild(html: str) -> QTextDocument:
         if src_list is not None:
             dst_list = lists.get(src_list.objectIndex())
             if dst_list is None:
-                # Numbered and custom lists collapse to the same bullet
-                # styles Tab-nesting uses, keyed off the nesting depth.
+                # Numbered and custom lists become the bullet styles Tab-nesting uses.
                 indent = max(1, src_list.format().indent())
                 list_fmt = QTextListFormat()
                 list_fmt.setIndent(indent)
@@ -99,9 +76,7 @@ def _rebuild(html: str) -> QTextDocument:
         while not it.atEnd():
             frag = it.fragment()
             if frag.isValid() and not frag.charFormat().isImageFormat():
-                # Code from editors arrives as white-space: pre, which Qt
-                # turns into non-breaking spaces — keep them and long lines
-                # would refuse to wrap in a narrow note.
+                # Code from editors arrives as non-breaking spaces, which would stop lines wrapping.
                 text = (frag.text()
                         .replace(_OBJECT_REPLACEMENT_CHAR, "")
                         .replace(_NBSP, " "))

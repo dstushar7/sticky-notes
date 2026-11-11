@@ -1,0 +1,63 @@
+# Local build from this checkout (see flatpak/README.md). The Flathub copy in
+# flatpak/flathub/ is identical except that it builds from a release tag.
+app-id: com.dabobrotosarkar.StickyNotes
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: com.riverbankcomputing.PyQt.BaseApp
+base-version: '6.11'
+command: stickynotes
+
+finish-args:
+  - --share=ipc
+  # X11 (or XWayland): saved positions, Keep on top and Hide from the dock need it.
+  - --socket=x11
+  - --device=dri
+  # The system tray icon (StatusNotifierItem).
+  - --talk-name=org.kde.StatusNotifierWatcher
+
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+  # Drop the BaseApp's unused QtWebEngine and QtPdf (~340 MB -> ~39 MB installed).
+  - rm -rf /app/lib/x86_64-linux-gnu/libQt6WebEngine* /app/lib/x86_64-linux-gnu/libQt6Pdf*
+           /app/lib/x86_64-linux-gnu/libQt6WebView* /app/lib/libexec /app/resources
+           /app/translations /app/qtwebengine_dictionaries
+  - rm -f /app/lib/python3*/site-packages/PyQt6/QtWebEngine* /app/lib/python3*/site-packages/PyQt6/QtPdf*
+
+modules:
+  - name: python-deps
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --no-deps --no-build-isolation --prefix=/app *.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl
+        sha256: 4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
+      - type: file
+        url: https://files.pythonhosted.org/packages/fc/b8/ff33610932e0ee81ae7f1269c890f697d56ff74b9f5b2ee5d9b7fa2c5355/python_xlib-0.33-py2.py3-none-any.whl
+        sha256: c3534038d42e0df2f1392a1b30a15a4ff5fdc2b86cfa94f072bf11b10a164398
+
+  - name: stickynotes
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/share/stickynotes
+      - cp -r stickynotes run_stickynotes.py /app/share/stickynotes/
+      - install -Dm755 stickynotes.sh /app/bin/stickynotes
+      - install -Dm644 flatpak/icons/256.png /app/share/icons/hicolor/256x256/apps/com.dabobrotosarkar.StickyNotes.png
+      - install -Dm644 flatpak/icons/512.png /app/share/icons/hicolor/512x512/apps/com.dabobrotosarkar.StickyNotes.png
+      - install -Dm644 flatpak/com.dabobrotosarkar.StickyNotes.desktop /app/share/applications/com.dabobrotosarkar.StickyNotes.desktop
+      - install -Dm644 com.dabobrotosarkar.StickyNotes.metainfo.xml /app/share/metainfo/com.dabobrotosarkar.StickyNotes.metainfo.xml
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - .git
+          - .flatpak-builder
+          - flatpak/build-dir
+          - flatpak/repo
+          - Screenshots
+          - stickynotes-redesign
+      - type: script
+        dest-filename: stickynotes.sh
+        commands:
+          - exec python3 /app/share/stickynotes/run_stickynotes.py "$@"

@@ -1,4 +1,3 @@
-# stickynotes/utils.py
 
 import math
 
@@ -43,15 +42,11 @@ def create_tray_icon() -> QIcon:
     return icon
 
 
-# ---------------------------------------------------------------------------
-# App chrome palette — menus and windows follow the desktop's light/dark mode
-# ---------------------------------------------------------------------------
+# App chrome palette (follows the desktop's light/dark mode).
 
 def chrome_is_dark() -> bool:
-    """True when the desktop prefers a dark appearance.
-
-    Qt 6.5+ reports the colour scheme directly; when it can't tell (some xcb
-    setups), fall back to how light the default window colour is.
+    """True when the desktop prefers dark. Falls back to the window colour's lightness
+    when Qt can't tell (some xcb setups).
     """
     app = QGuiApplication.instance()
     if app is None:
@@ -72,9 +67,8 @@ def chrome_palette() -> dict:
 
 
 def chrome_stylesheet(pal: dict) -> str:
-    """Shared stylesheet for the app's own windows (All notes, Settings,
-    Receive). Widgets opt into variants with dynamic properties:
-      QPushButton[kind="primary"|"green"|"danger"]   QLabel[role="muted"|"heading"|"title"]
+    """Shared stylesheet for All notes, Settings and Receive. Variants via properties:
+    QPushButton[kind=primary|green|danger], QLabel[role=muted|heading|title].
     """
     return f"""
         QWidget#chromeRoot {{ background-color: {pal['window']}; }}
@@ -112,10 +106,7 @@ def chrome_stylesheet(pal: dict) -> str:
     """
 
 
-# ---------------------------------------------------------------------------
-# Line icons — painted, because the snap ships without Qt's SVG support and
-# emoji glyphs ignore the theme colour (see create_pin_icon).
-# ---------------------------------------------------------------------------
+# Line icons, painted: the snap has no Qt SVG support, and emoji ignore the theme colour.
 
 def _icon_path(name: str) -> tuple:
     """(stroke_path, fill_path, dashed_path) for `name` in a 24x24 grid."""
@@ -185,8 +176,7 @@ def _icon_path(name: str) -> tuple:
 
 
 def line_icon(name: str, color: str, size: int = 18, stroke: float = 1.9) -> QIcon:
-    """A single-colour stroke icon drawn from _icon_path. Rendered at 2x so it
-    stays crisp on HiDPI screens."""
+    """A single-colour stroke icon from _icon_path, drawn at 2x for HiDPI."""
     scale = 2
     pm = QPixmap(size * scale, size * scale)
     pm.setDevicePixelRatio(scale)
@@ -239,7 +229,6 @@ def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(qcolor)
 
-    # Three rows: bullet (small filled circle) + horizontal bar
     rows = 3
     margin_x = size * 0.15
     bullet_r = size * 0.07
@@ -251,9 +240,7 @@ def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
 
     for i in range(rows):
         cy = first_y + i * row_spacing
-        # Bullet
         p.drawEllipse(QPointF(margin_x + bullet_r, cy), bullet_r, bullet_r)
-        # Bar (rounded ends)
         bar_rect = QRectF(bar_x, cy - bar_h / 2, bar_w, bar_h)
         p.drawRoundedRect(bar_rect, bar_h / 2, bar_h / 2)
 
@@ -262,10 +249,7 @@ def create_bullet_list_icon(color: str, size: int = 24) -> QIcon:
 
 
 def create_checklist_icon(color: str, size: int = 24) -> QIcon:
-    """A 'checklist' icon: three rows of a small square box plus a short bar,
-    with a tick in the first box. Deliberately mirrors the geometry of
-    create_bullet_list_icon so the two toolbar buttons read as siblings —
-    same three rows, same bar lengths, box instead of bullet."""
+    """A checklist icon: the bullet-list layout with boxes, the first one ticked."""
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
@@ -286,7 +270,6 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
         cy = first_y + i * row_spacing
         box_rect = QRectF(margin_x, cy - box / 2, box, box)
 
-        # Outlined box
         pen = QPen(qcolor)
         pen.setWidthF(stroke)
         pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
@@ -294,7 +277,7 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(box_rect)
 
-        # Tick in the first box only — signals "checklist", not "empty boxes"
+        # Tick only the first box.
         if i == 0:
             tick = QPen(qcolor)
             tick.setWidthF(stroke * 1.15)
@@ -307,7 +290,6 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
                 QPointF(box_rect.right() - box * 0.16, box_rect.top() + box * 0.22),
             ]))
 
-        # Bar (rounded ends), same as the bullet-list icon
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(qcolor)
         bar_rect = QRectF(bar_x, cy - bar_h / 2, bar_w, bar_h)
@@ -318,17 +300,8 @@ def create_checklist_icon(color: str, size: int = 24) -> QIcon:
 
 
 def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
-    """A thumbtack: round head, flange, and a stubby needle.
-
-    Painted rather than drawn from a font glyph on purpose — 📌 and 📍 resolve
-    to a colour emoji font on most Linux setups, which ignores the button's
-    theme colour and renders as a coloured blob at small sizes. Same reason
-    create_bullet_list_icon exists.
-
-    `filled` carries the pinned/unpinned state. FloatingButton's :checked
-    background alone is too subtle to read at a glance on the lighter themes
-    (idle glass is 0.55 alpha vs 0.85 checked), so the icon itself changes:
-    solid when pinned, outline when not. Same convention as a bookmark toggle.
+    """A thumbtack, painted because pin emoji ignore the theme colour.
+    Solid when pinned, outline when not.
     """
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
@@ -341,8 +314,7 @@ def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
         p.setBrush(qcolor)
     else:
         pen = QPen(qcolor)
-        # Scale the stroke with the icon so the outline stays visible at 16px
-        # without going chunky at 24px.
+        # Scale the stroke so it stays visible at 16px without going chunky at 24px.
         pen.setWidthF(max(1.2, size * 0.085))
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         p.setPen(pen)
@@ -357,8 +329,7 @@ def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
     tip_y = size * 0.90
 
     p.drawEllipse(QPointF(cx, head_cy), head_r, head_r)
-    # Flange + needle as one silhouette: a wide shoulder tapering to a point.
-    # The shoulder is what distinguishes a thumbtack from a lollipop.
+    # A wide shoulder tapering to a point: that shape reads as a thumbtack.
     p.drawPolygon(QPolygonF([
         QPointF(cx - flange_half, flange_y),
         QPointF(cx + flange_half, flange_y),
@@ -372,14 +343,7 @@ def create_pin_icon(color: str, size: int = 24, filled: bool = True) -> QIcon:
 
 
 def tooltip_stylesheet() -> str:
-    """App-wide QToolTip styling, built from the config tokens.
-
-    Applied once to the QApplication rather than per note: tooltips are
-    top-level windows, and a single app-level rule reaches every one of them
-    (note chrome, the options panel swatches, the About dialog) without each
-    widget having to restyle them. Nothing else in the app styles QToolTip,
-    so this can't collide with the per-widget stylesheets.
-    """
+    """App-wide tooltip stylesheet, applied once to the QApplication."""
     return f"""
         QToolTip {{
             background-color: {config.TOOLTIP_BACKGROUND_COLOR};
@@ -393,7 +357,7 @@ def tooltip_stylesheet() -> str:
 
 
 def get_theme(name: str) -> dict:
-    """Returns theme dict for name, falling back to DEFAULT_THEME if not found."""
+    """Theme dict for `name`, falling back to DEFAULT_THEME."""
     return config.THEMES.get(name, config.THEMES[config.DEFAULT_THEME])
 
 

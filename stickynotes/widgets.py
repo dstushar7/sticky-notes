@@ -1,11 +1,4 @@
-# stickynotes/widgets.py
-"""
-Reusable widgets that aren't tied to a single screen.
-
-Currently houses FloatingButton — a QPushButton variant with a translucent
-"glass" idle state, hover/pressed/checked transitions tuned to feel macOS-like,
-and an optional drop shadow for the standalone title-bar buttons.
-"""
+"""Reusable widgets: ToggleSwitch, MenuRow and FloatingButton."""
 
 from enum import Enum
 from PyQt6.QtCore import Qt, QSize, QRectF, pyqtSignal, QPropertyAnimation, pyqtProperty, QEasingCurve
@@ -19,8 +12,7 @@ from . import config
 
 
 class ToggleSwitch(QAbstractButton):
-    """A small on/off switch (checkable). Colours come from the chrome palette
-    passed in, so it matches whichever light/dark window hosts it."""
+    """A small on/off switch, coloured from its window's chrome palette."""
 
     def __init__(self, pal: dict, parent=None):
         super().__init__(parent)
@@ -83,11 +75,7 @@ class ToggleSwitch(QAbstractButton):
 
 
 class MenuRow(QWidget):
-    """One clickable row in a popup menu: [icon] label .......... hint
-
-    A plain QPushButton can't lay out a right-aligned secondary hint, so this
-    is a small widget with its own hover background and a `clicked` signal.
-    """
+    """One popup-menu row: icon, label and a right-aligned hint."""
     clicked = pyqtSignal()
 
     def __init__(self, text: str, hint: str = "", parent=None):
@@ -128,49 +116,18 @@ class MenuRow(QWidget):
 
 
 class FloatingButton(QPushButton):
-    """A QPushButton that paints as a translucent rounded pill.
-
-    Two tones:
-      * TITLE_BAR — fixed 32×32, carries a soft drop shadow so the button
-        reads as a tactile floating chip on top of the title bar.
-      * TOOLBAR — variable size (the format bar resizes its buttons with
-        the note width), no shadow because adjacent buttons would otherwise
-        pile shadows visually.
-
-    Theming flows through `apply_theme(text_color, is_dark_theme)`. Call it
-    after construction and again on every theme switch. `extra_css` is the
-    per-button "personality" stylesheet (e.g. `font-weight: bold`) that
-    survives every re-skin.
-
-    `tooltip` names the button. Every button on a note is icon-only or a single
-    letter, so it's the only thing that identifies it for a sighted user — and
-    the accessible name is the only thing that identifies it for a screen
-    reader. Both are set from that one argument.
-
-    `shortcut` and `hint` enrich the *visible* tooltip only:
-        tooltip="Bullet list", shortcut="Ctrl+Shift+L", hint="Tab to indent"
-        -> tooltip reads "Bullet list (Ctrl+Shift+L) — Tab to indent"
-        -> accessible name stays "Bullet list"
-    The split is deliberate. A screen reader announces the accessible name, and
-    it exposes key bindings through a separate channel — folding "(Ctrl+B)" into
-    the name just makes it read the punctuation aloud.
-
-    Note these are display-only: the real bindings are QShortcuts owned by the
-    text edit (see StickyNote._setup_shortcuts). Setting a Qt button shortcut
-    here would create a second, competing binding for the same key.
+    """A translucent rounded pill button for the title bar and the format toolbar.
+    Shortcuts in its tooltip are display-only; the real bindings live on the note.
     """
 
     class Tone(Enum):
         TITLE_BAR = "title_bar"
         TOOLBAR = "toolbar"
 
-    # Square chip dimension for title-bar tone buttons. Smaller than the bar
-    # height so the drop shadow has vertical room to render before being
-    # clipped by the title-bar bounds.
+    # Smaller than the bar so the drop shadow isn't clipped.
     TITLE_BAR_SIZE = 28
 
-    # Translucent-white "glass" tokens. The same alpha values are reused for
-    # every light theme; charcoal flips to a low-alpha white-on-dark recipe.
+    # Translucent "glass" colours; the charcoal theme uses the dark set.
     _GLASS_LIGHT = {
         "idle":    "rgba(255, 255, 255, 0.55)",
         "hover":   "rgba(255, 255, 255, 0.75)",
@@ -203,8 +160,7 @@ class FloatingButton(QPushButton):
         self._tone = tone
         self._extra_css = extra_css
         self._font_css = font_css
-        # Don't steal keyboard focus from the QTextEdit — otherwise Ctrl+B/I/U
-        # shortcuts stop working once you click a toolbar button.
+        # Keep keyboard focus in the text, or Ctrl+B/I/U stop working after a click.
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCheckable(checkable)
         if tooltip:
@@ -220,8 +176,7 @@ class FloatingButton(QPushButton):
             self._install_shadow()
 
     def _install_shadow(self):
-        """Soft drop shadow for the floating-chip look. Profile is sourced
-        from config.SHADOW_BUTTON_CHIP so design tweaks live in one place."""
+        """Soft drop shadow (config.SHADOW_BUTTON_CHIP)."""
         eff = QGraphicsDropShadowEffect(self)
         blur, offset_y, alpha = config.SHADOW_BUTTON_CHIP
         eff.setBlurRadius(blur)
@@ -230,23 +185,17 @@ class FloatingButton(QPushButton):
         self.setGraphicsEffect(eff)
 
     def set_extra_css(self, extra_css: str):
-        """Replace the per-button personality CSS (e.g. font-weight: bold).
-        Caller should invoke apply_theme afterwards to repaint."""
+        """Replace the per-button CSS (e.g. bold); call apply_theme afterwards."""
         self._extra_css = extra_css
 
     def set_font_css(self, font_css: str):
-        """Set the font-size declaration for the button (e.g. 'font-size:
-        14px;'). Used by FormatBar when scaling toolbar buttons. Caller
-        should invoke apply_theme afterwards to repaint."""
+        """Set the button's font-size CSS; call apply_theme afterwards."""
         self._font_css = font_css
 
     def apply_theme(self, text_color: str, is_dark_theme: bool):
-        """Rebuild the stylesheet using the current size, theme palette, and
-        any per-button extra CSS. Safe to call repeatedly — used on theme
-        change AND whenever the button is resized (so border-radius scales)."""
+        """Rebuild the stylesheet. Called on theme changes and resizes, since the radius scales."""
         glass = self._GLASS_DARK if is_dark_theme else self._GLASS_LIGHT
-        # Border-radius scales with size — clamped so toolbar buttons stay
-        # readable both at 24px (narrow note) and 44px (wide note).
+        # Clamped so the radius suits both 24px and 44px buttons.
         radius = max(6, min(12, int(self.height() * 0.27)))
         self.setStyleSheet(f"""
             QPushButton {{

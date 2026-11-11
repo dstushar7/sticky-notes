@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sticky Notes
+Comment=Pretty, local-only sticky notes for your desktop
+Exec=stickynotes
+Icon=com.dabobrotosarkar.StickyNotes
+Terminal=false
+Categories=Utility;
+Keywords=notes;sticky;memo;todo;checklist;reminder;
+StartupNotify=false
+StartupWMClass=StickyNotesApp

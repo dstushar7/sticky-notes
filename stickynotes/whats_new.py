@@ -1,20 +1,6 @@
-# stickynotes/whats_new.py
-#
-# One-time "What's new" notes for feature releases.
-#
-# TO ANNOUNCE A RELEASE: add an entry to RELEASES below, keyed by the version
-# in stickynotes/__init__.py. Nothing else needs to change. Bug-fix releases
-# simply get no entry and show nothing.
-#
-# Who sees it (decided in TrayManager at launch):
-#   * upgrading users, once, on the first launch of the new version — even
-#     an autostart launch, since that's how most people start the app
-#   * never a first-time user: they get the welcome note instead
-# Someone skipping releases (3.6 -> 3.8) gets ONE note covering every entry
-# they missed, newest first, rather than a pile of notes.
-#
-# Body is note HTML: <p>, <b>, <i>, <u>, <s>, <ul>/<li>. Keep it short — it
-# opens as a normal sticky note the user reads and deletes.
+# One-time "What's new" notes. To announce a feature release, add an entry keyed by
+# the version in __init__.py; bug-fix releases get none. Someone who skips releases
+# gets one note covering everything they missed.
 
 from typing import NamedTuple, Optional
 
@@ -69,9 +55,7 @@ def _parse(version: str) -> Optional[tuple]:
 
 def pending(last_seen: Optional[str], current: str) -> Optional[Release]:
     """The note to show after upgrading from `last_seen` to `current`, or None.
-
-    `last_seen` is None for installs that predate version tracking; they're
-    treated as older than every entry, so they get the current announcement.
+    Installs from before version tracking (None) count as older than every entry.
     """
     now = _parse(current)
     if now is None:

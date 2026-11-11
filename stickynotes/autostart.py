@@ -1,13 +1,5 @@
-# stickynotes/autostart.py
-#
-# XDG autostart toggle. Writes/removes ~/.config/autostart/stickynotes.desktop.
-# Honored by GNOME, KDE, XFCE, and most Linux desktop environments.
-#
-# Under strict snap confinement the XDG paths redirect to
-# $SNAP_USER_DATA/.config/autostart — exactly where snapd's session agent
-# looks. It links per-snap entries into the real ~/.config/autostart at
-# session start, so the same code path works for both source and snap
-# builds without any interface plug.
+# Login autostart through an XDG autostart entry. Under snap, snapd syncs the
+# entry to the host; under Flatpak, the Background portal creates it.
 
 import os
 import sys
@@ -18,28 +10,60 @@ _OWN_SNAP_NAME = "stickynotes-dabobroto"
 _OWN_SNAP_APP = "stickynotes"
 
 
-# ---------------------------------------------------------------------------
-# Snap detection
-# ---------------------------------------------------------------------------
-
 def is_snap_runtime() -> bool:
-    """True iff we're running under our own snap (not a parent snap like VS Code).
-
-    $SNAP_NAME can leak from a parent snap, so match against our own name
-    rather than trusting any non-empty value.
-    """
+    """True only under our own snap: $SNAP_NAME leaks in from parent snaps like VS Code."""
     return os.environ.get("SNAP_NAME") == _OWN_SNAP_NAME
 
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
+FLATPAK_APP_ID = "com.dabobrotosarkar.StickyNotes"
+
+
+def is_flatpak_runtime() -> bool:
+    """True only under our own Flatpak."""
+    return os.environ.get("FLATPAK_ID") == FLATPAK_APP_ID
+
+
+def _request_portal_autostart(enabled: bool) -> None:
+    """Ask the Background portal to add or remove the host's autostart entry.
+    Raises OSError when the desktop has none (e.g. XFCE without xdg-desktop-portal-xapp).
+    """
+    try:
+        from PyQt6.QtCore import QMetaType
+        from PyQt6.QtDBus import QDBus, QDBusArgument, QDBusConnection, QDBusMessage
+    except ImportError as e:
+        raise OSError(f"D-Bus support is missing ({e})") from e
+    bus = QDBusConnection.sessionBus()
+    if not bus.isConnected():
+        raise OSError("no connection to the desktop session")
+    # Plain values: PyQt wraps a{sv} values itself, and QDBusVariant would nest them.
+    # 'commandline' must be 'as'; a Python list would be sent as 'av'.
+    commandline = QDBusArgument()
+    commandline.add(["stickynotes", "--autostart"], QMetaType.Type.QStringList.value)
+    options = {
+        "reason": "Open Sticky Notes quietly in the tray when you log in",
+        "autostart": bool(enabled),
+        "commandline": commandline,
+        "dbus-activatable": False,
+    }
+    msg = QDBusMessage.createMethodCall(
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Background",
+        "RequestBackground",
+    )
+    msg.setArguments(["", options])
+    reply = bus.call(msg, QDBus.CallMode.Block, 2000)
+    if reply.type() == QDBusMessage.MessageType.ErrorMessage:
+        if reply.errorName() in ("org.freedesktop.DBus.Error.UnknownMethod",
+                                 "org.freedesktop.DBus.Error.UnknownInterface",
+                                 "org.freedesktop.DBus.Error.ServiceUnknown"):
+            raise OSError("this desktop can't start Flatpak apps at login. "
+                          "Add Sticky Notes to your startup applications instead")
+        raise OSError(reply.errorMessage() or reply.errorName())
+
 
 def _autostart_dir() -> Path:
-    # Under snap, HOME / XDG_CONFIG_HOME are redirected to
-    # $SNAP_USER_DATA/.config — exactly where snapd's session agent looks
-    # before linking entries into the real ~/.config/autostart at login.
-    # Outside snap this is just the standard XDG path.
+    # Under snap this resolves into $SNAP_USER_DATA, where snapd's session agent looks.
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "autostart"
 
@@ -49,14 +73,7 @@ def _desktop_path() -> Path:
 
 
 def _exec_argv() -> list[str]:
-    """Argv to invoke when autostart fires.
-
-    The trailing --autostart marker lets the launched app distinguish a
-    login-time autostart from a manual user launch. TrayManager uses
-    this to skip creating a blank starter note when the user has no
-    saved notes — so logging in to an empty state stays quiet instead
-    of flashing up a useless empty window every time.
-    """
+    """Command for the autostart entry; --autostart makes the app start quietly in the tray."""
     if is_snap_runtime():
         return [f"/snap/bin/{_OWN_SNAP_NAME}.{_OWN_SNAP_APP}", "--autostart"]
     entry = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
@@ -66,22 +83,13 @@ def _exec_argv() -> list[str]:
     return [sys.executable, "--autostart"]
 
 
-# ---------------------------------------------------------------------------
-# Quoting helpers
-# ---------------------------------------------------------------------------
-
 def _sh_single_quote(s: str) -> str:
     """Wrap s as a single-quoted POSIX shell literal (handles embedded ')."""
     return "'" + s.replace("'", "'\\''") + "'"
 
 
 def _xdg_quote(s: str) -> str:
-    """Wrap s in double quotes per XDG Desktop Entry Exec= field rules.
-
-    Inside double quotes, these chars need a leading backslash:
-        "  \\  $  `
-    Order matters: escape `\\` first, then the other reserved chars.
-    """
+    """Double-quote s for a desktop entry's Exec= field."""
     escaped = (
         s.replace("\\", "\\\\")
          .replace('"', '\\"')
@@ -92,27 +100,13 @@ def _xdg_quote(s: str) -> str:
 
 
 def _exec_line() -> str:
-    """Build the Exec= value for the autostart desktop entry.
-
-    Under snap: a plain XDG Exec line — just the namespaced /snap/bin/...
-    command. snapd's session-agent syncs the desktop file from
-    $SNAP_USER_DATA/.config/autostart/ into ~/.config/autostart/ at login,
-    and we suspect it filters out non-trivial Exec lines (sh -c wrappers
-    in particular). snapd also handles cleanup of synced entries when the
-    snap is removed, so the source-build's self-cleaning logic is moot.
-
-    Outside snap: a self-cleaning /bin/sh -c '<inner>' wrapper that removes
-    the autostart entry if the launcher binary has disappeared (source
-    folder deleted, venv removed, etc.), so a stale entry doesn't fail
-    silently at every login.
+    """The Exec= line. Snap: the plain /snap/bin command, which snapd rewrites.
+    Elsewhere: a sh wrapper that deletes the entry once the launcher is gone.
     """
     argv = _exec_argv()
 
     if is_snap_runtime():
-        # Plain space-joined argv. snapd parses Exec=, discards the binary
-        # token, and appends remaining args to the <snap>.<app> wrapper
-        # invocation. No XDG quoting needed — neither the snap path nor
-        # --autostart contains shell-special characters.
+        # snapd swaps the binary for its own wrapper and keeps the arguments.
         return " ".join(argv)
 
     binary = argv[0]
@@ -127,16 +121,23 @@ def _exec_line() -> str:
     return f"/bin/sh -c {_xdg_quote(inner)}"
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def is_enabled() -> bool:
     return _desktop_path().is_file()
 
 
 def set_enabled(enabled: bool) -> None:
-    """Enable or disable the autostart entry. Raises OSError on I/O failure."""
+    """Turn autostart on or off. Raises OSError on failure.
+    Under Flatpak the local file only records the choice; the portal does the real work.
+    """
+    if is_flatpak_runtime():
+        try:
+            _request_portal_autostart(enabled)
+        except OSError:
+            if enabled:
+                # Clear any old record so the switch never shows a stale "on".
+                _desktop_path().unlink(missing_ok=True)
+                raise
+            # Without a portal there is nothing on the host to remove; still clear our record.
     path = _desktop_path()
     if enabled:
         contents = (
@@ -148,11 +149,6 @@ def set_enabled(enabled: bool) -> None:
             "Terminal=false\n"
             "Categories=Utility;\n"
         )
-        # Write the file directly; only create the parent directory if it's
-        # genuinely missing. Avoids a redundant mkdir on every toggle when
-        # ~/.config/autostart already exists (the common case). The snap
-        # personal-files grant covers the directory, so the fallback mkdir
-        # also succeeds under confinement.
         try:
             path.write_text(contents)
         except FileNotFoundError:

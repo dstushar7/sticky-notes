@@ -1,12 +1,5 @@
-# stickynotes/chrome.py
-#
-# The app's own windows (v4): All notes, Settings (General / Shortcuts /
-# About), Receive, and the small "Note deleted · Undo" toast.
-#
-# They follow the desktop's light/dark preference (utils.chrome_palette);
-# notes keep their own colours either way. Windows use normal system
-# decorations — on XWayland that's what makes them movable and closable in
-# the way users expect — and only their contents are styled.
+# The app's own windows: All notes, Settings, Receive and the Undo toast.
+# They follow the desktop's light/dark preference; notes keep their own colours.
 
 from html import escape as html_escape
 
@@ -42,8 +35,7 @@ def _kind(button: QPushButton, kind: str) -> QPushButton:
 
 
 def _discard(widget):
-    """Remove a widget from view now and free it later. deleteLater alone
-    leaves it on screen until the event loop gets back round to it."""
+    """Hide a widget now and free it later (deleteLater alone leaves it on screen)."""
     if widget is not None:
         widget.hide()
         widget.setParent(None)
@@ -58,9 +50,7 @@ def _divider() -> QFrame:
 
 
 def preview_lines(body_html: str, limit: int = 6) -> list:
-    """Plain-text lines for a card preview, with checklist items shown as
-    '☐ ' / '✓ '. Reads the HTML into a throwaway document; never touches a
-    real note."""
+    """Plain-text preview lines for a card, with checklist items as ☐ / ✓."""
     doc = QTextDocument()
     doc.setHtml(body_html)
     lines = []
@@ -80,9 +70,7 @@ def preview_lines(body_html: str, limit: int = 6) -> list:
     return lines
 
 
-# ---------------------------------------------------------------------------
-# NoteCard — a miniature note: coloured title band, a few lines, footer.
-# ---------------------------------------------------------------------------
+# NoteCard: a miniature note (title band, a few lines, footer).
 class NoteCard(QAbstractButton):
     def __init__(self, *, theme: str, title: str, lines: list, footer: str,
                  pinned: bool = False, interactive: bool = True, parent=None):
@@ -202,9 +190,7 @@ class _ColourDot(QAbstractButton):
             p.drawEllipse(QRectF(1, 1, 24, 24))
 
 
-# ---------------------------------------------------------------------------
-# NotesHub — "All notes": every note, searchable, filterable by colour.
-# ---------------------------------------------------------------------------
+# NotesHub: the "All notes" window.
 class NotesHub(QWidget):
     noteChosen = pyqtSignal(str)      # note_id to bring forward
     newNoteRequested = pyqtSignal()
@@ -273,8 +259,7 @@ class NotesHub(QWidget):
         self.refresh()
 
     def eventFilter(self, obj, event):   # noqa: N802
-        # Column count follows the visible width of the card area, which is
-        # only known once the window is laid out (and on every resize).
+        # Columns follow the card area's width, which is only known once laid out.
         if obj is self._scroll.viewport() and event.type() == QEvent.Type.Resize:
             if self._column_count() != self._columns:
                 QTimer.singleShot(0, self.refresh)
@@ -333,10 +318,7 @@ class NotesHub(QWidget):
         )
 
 
-# ---------------------------------------------------------------------------
-# SettingsWindow — General / Shortcuts / About in one window.
-# Replaces the three separate stock dialogs of v3. Same settings, same keys.
-# ---------------------------------------------------------------------------
+# SettingsWindow: General, Shortcuts and About.
 class _NavButton(QPushButton):
     def __init__(self, text: str, icon_name: str, pal: dict, parent=None):
         super().__init__(text, parent)
@@ -363,7 +345,7 @@ class SettingsWindow(QWidget):
         self._pal = utils.chrome_palette()
         self.setObjectName("chromeRoot")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        # Plain "Settings" — desktop shells prepend the app name themselves.
+        # Shells prepend the app name themselves.
         self.setWindowTitle("Settings")
         self.setWindowIcon(utils.create_tray_icon())
         self.resize(720, 520)
@@ -468,12 +450,8 @@ class SettingsWindow(QWidget):
         self._dock_row = self._row("Hide notes from the dock and taskbar",
                                    "Notes stay open and reachable from the tray. This also removes them from Alt-Tab.",
                                    self.hide_dock_switch)
-        # Two hard requirements, each a way to strand the user with no route
-        # back to their notes:
-        #   * no system tray -> hiding from the dock removes the LAST way to
-        #     reach the app, including this window, which opens from the tray.
-        #   * not on xcb -> skip-taskbar is an EWMH state; native Wayland has
-        #     no protocol for it, so the switch would silently do nothing.
+        # Hiding from the dock needs a tray (the only way back to the notes) and X11
+        # (Wayland has no skip-taskbar).
         if not QSystemTrayIcon.isSystemTrayAvailable():
             self._disable_hide_dock("Unavailable: no system tray on this desktop, so hiding the "
                                     "dock icon would leave no way to reach your notes.")
@@ -508,10 +486,7 @@ class SettingsWindow(QWidget):
         return page
 
     def _disable_hide_dock(self, reason: str):
-        # Show it off, because it genuinely isn't in effect — but block signals
-        # while doing so, or setChecked(False) would ERASE the user's stored
-        # preference just for opening Settings on a machine with no tray. The
-        # value has to survive so it takes effect again once a tray is back.
+        # Show it as off without emitting, so the stored preference survives until a tray returns.
         self.hide_dock_switch.blockSignals(True)
         self.hide_dock_switch.setChecked(False)
         self.hide_dock_switch.blockSignals(False)
@@ -653,15 +628,7 @@ class SettingsWindow(QWidget):
         return page
 
 
-# ---------------------------------------------------------------------------
-# ReceiveDialog — paste a shared note's text, preview it, add it as a note.
-#
-# Opened from the tray, All notes, or any note's ••• menu and owned by
-# TrayManager, which creates the note on noteReceived. Validation reruns on
-# every edit, so the preview / message and the Add button always describe
-# what's in the box. The share format itself (sharing.py) is unchanged, so
-# notes still travel between v3 and v4 users in both directions.
-# ---------------------------------------------------------------------------
+# ReceiveDialog: paste a shared note, preview it, add it.
 class ReceiveDialog(QWidget):
     noteReceived = pyqtSignal(object)   # sharing.SharedNote
 
@@ -723,8 +690,7 @@ class ReceiveDialog(QWidget):
         self._validate()
 
     def _prefill_from_clipboard(self):
-        """Save a paste when the user has just copied a share. Only text that
-        actually decodes is taken — never whatever else is on the clipboard."""
+        """If the clipboard holds a valid shared note, paste it in for the user."""
         text = QGuiApplication.clipboard().text()
         try:
             sharing.decode_note(text)
@@ -781,10 +747,7 @@ class ReceiveDialog(QWidget):
         self.close()
 
 
-# ---------------------------------------------------------------------------
-# Toast — "Note deleted · Undo". A small frameless window near the bottom of
-# the screen that fades itself out. Never takes focus.
-# ---------------------------------------------------------------------------
+# Toast: "Note deleted · Undo", a small frameless window that fades out.
 class Toast(QWidget):
     actionTriggered = pyqtSignal()
 
