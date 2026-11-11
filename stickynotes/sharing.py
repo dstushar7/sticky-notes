@@ -1,26 +1,8 @@
-# stickynotes/sharing.py
-#
 # Share / Receive: a whole note as one pasteable piece of text.
-#
 #   Sticky Note: Groceries (paste into Sticky Notes → Receive)
-#   SN1:eJyNVE1v2zAM/StEDsFxQgEbMAzsuA7Yo2EbsF4Gmab2Vt1y5F9e3Q9rk…
-#
-# The first line is for humans who don't have the app. The token is
-# "SN<format version>:" + base64(zlib(JSON)). It is ENCODED, not encrypted —
-# anyone holding the text can read the note, and the UI says so.
-#
-# Design notes:
-#   * Standard base64, not the URL-safe alphabet: "_" would be eaten by
-#     Slack/WhatsApp italics. "+/=" pass through chat apps untouched.
-#   * zlib carries an Adler-32 checksum, so a truncated or altered copy fails
-#     to decode instead of producing a garbled note.
-#   * Only content travels: title, colour, body. Never the note id (the
-#     receiver always gets a fresh one, so receiving your own note can't
-#     overwrite it), position, size, pin or collapse state.
-#   * Received text is untrusted: decompression is size-capped and the body
-#     goes through richtext.sanitized_html, the same rules as a paste.
-#   * FORMAT_VERSION lets a future format (e.g. password-protected) ship
-#     without breaking old strings; older apps reject newer ones by name.
+#   SN1:<base64(zlib(JSON))>
+# Encoded, not encrypted. Standard base64, because chat apps eat "_" as italics;
+# zlib's checksum rejects truncated copies. Only title, colour and body travel.
 
 import base64
 import binascii
@@ -35,12 +17,10 @@ from .richtext import sanitized_html
 
 FORMAT_VERSION = 1
 
-# Upper bound on the decompressed payload. A typical note is a few KB; this
-# only exists so a crafted string can't decompress into gigabytes.
+# Caps decompression so a crafted string can't expand into gigabytes.
 MAX_PAYLOAD_BYTES = 1_000_000
 
-# The token may be split across lines by email clients that hard-wrap, so
-# whitespace is allowed inside it; _candidates() works out where it ends.
+# Whitespace is allowed inside the token: email clients hard-wrap it.
 _TOKEN_RE = re.compile(r"SN(\d+):([A-Za-z0-9+/=\s]+)")
 
 # User-facing messages, shown as-is by the Receive dialog.
@@ -82,12 +62,7 @@ def encode_note(title: str, title_is_auto: bool, theme: str, body_html: str) -> 
 
 
 def decode_note(text: str) -> SharedNote:
-    """Parse text pasted into Receive. Raises ShareError with a user message.
-
-    The token can sit anywhere in `text` — the human header line, a chat
-    client's "Forwarded message" preamble or a trailing "thanks!" are all
-    ignored.
-    """
+    """Parse text pasted into Receive; the token may sit anywhere in it. Raises ShareError."""
     match = _TOKEN_RE.search(text or "")
     if match is None:
         raise ShareError(MSG_NOT_A_SHARE)
@@ -103,12 +78,8 @@ def decode_note(text: str) -> SharedNote:
 
 
 def _candidates(span: str):
-    """Possible token extents, longest first.
-
-    Whitespace is allowed inside the token (hard-wrapped email), but that means
-    a following line made only of base64-safe characters ("Thanks") gets
-    swallowed too. Dropping trailing whitespace-separated chunks one at a time
-    finds the real end; the zlib checksum rejects every wrong guess.
+    """Possible token extents, longest first. Trailing words like "Thanks" can look like
+    base64, so chunks are dropped until the zlib checksum accepts one.
     """
     chunks = span.split()
     for end in range(len(chunks), 0, -1):

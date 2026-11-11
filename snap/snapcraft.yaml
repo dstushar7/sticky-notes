@@ -79,18 +79,11 @@ apps:
     command: bin/python3 $SNAP/run_stickynotes.py
     extensions: [gnome]
     desktop: gui/stickynotes.desktop
-    # Opt-in for snapd's autostart-sync: the session agent watches
-    # $SNAP_USER_DATA/.config/autostart/ and mirrors entries into the
-    # real ~/.config/autostart/ only when this attribute is declared.
+    # Lets snapd sync the app's autostart entry to the host.
     autostart: stickynotes.desktop
     plugs: [home]
     environment:
-      # Prefer xcb (works natively on X11, and via XWayland on Wayland
-      # sessions). Native Wayland forbids clients from setting absolute
-      # window positions, so per-note geometry won't persist across
-      # restarts under wayland-egl. xcb gives consistent geometry behavior
-      # on both display servers. The ";wayland" fallback only kicks in on
-      # the rare Wayland session without XWayland, where xcb won't load.
+      # xcb (XWayland on Wayland) so note positions persist; wayland is only a fallback.
       QT_QPA_PLATFORM: xcb;wayland
 
 parts:
@@ -135,10 +128,7 @@ parts:
         rm -f "$PYQT6/${mod}.abi3.so"
       done
 
-      # Remove unused Qt6 shared libraries (keep Core/Gui/Widgets/DBus/XcbQpa/OpenGL).
-      # WaylandClient + WaylandEglClientHwIntegration are required for the
-      # wayland/wayland-egl platform plugin to load on Wayland sessions —
-      # without them the snap only starts on X11/XWayland.
+      # Keep only the Qt libraries the app loads (the Wayland ones serve the fallback plugin).
       find "$QT6LIB" -maxdepth 1 -name 'libQt6*.so*' \
         ! -name 'libQt6Core.so*' \
         ! -name 'libQt6Gui.so*' \

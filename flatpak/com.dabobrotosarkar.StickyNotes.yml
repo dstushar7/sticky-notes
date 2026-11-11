@@ -1,10 +1,5 @@
-# Flatpak manifest for local builds from this checkout.
-# The copy submitted to Flathub is flatpak/flathub/<same name>; it is identical
-# except that it builds from a release tag instead of this directory.
-#
-#   flatpak run org.flatpak.Builder --user --install --install-deps-from=flathub \
-#       --force-clean flatpak/build-dir flatpak/com.dabobrotosarkar.StickyNotes.yml
-#   flatpak run com.dabobrotosarkar.StickyNotes
+# Local build from this checkout (see flatpak/README.md). The Flathub copy in
+# flatpak/flathub/ is identical except that it builds from a release tag.
 app-id: com.dabobrotosarkar.StickyNotes
 runtime: org.kde.Platform
 runtime-version: '6.11'
@@ -15,9 +10,7 @@ command: stickynotes
 
 finish-args:
   - --share=ipc
-  # X11, natively or through XWayland: the app uses Qt's xcb backend so that
-  # notes reopen where you left them and "Keep on top" / "Hide from the dock"
-  # work. Wayland gives clients no way to do any of the three.
+  # X11 (or XWayland): saved positions, Keep on top and Hide from the dock need it.
   - --socket=x11
   - --device=dri
   # The system tray icon (StatusNotifierItem).
@@ -25,8 +18,7 @@ finish-args:
 
 cleanup-commands:
   - /app/cleanup-BaseApp.sh
-  # The PyQt BaseApp bundles QtWebEngine (Chromium) and QtPdf, which the app
-  # never uses (it needs QtCore/QtGui/QtWidgets/QtDBus). ~340 MB -> ~39 MB.
+  # Drop the BaseApp's unused QtWebEngine and QtPdf (~340 MB -> ~39 MB installed).
   - rm -rf /app/lib/x86_64-linux-gnu/libQt6WebEngine* /app/lib/x86_64-linux-gnu/libQt6Pdf*
            /app/lib/x86_64-linux-gnu/libQt6WebView* /app/lib/libexec /app/resources
            /app/translations /app/qtwebengine_dictionaries

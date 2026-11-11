@@ -1,20 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  AppStream metainfo — the canonical, machine-readable identity of this app.
-
-  The <id> below is the reverse-DNS application ID, namespaced under a domain
-  the author controls (dabobrotosarkar.com). Software centres (GNOME Software,
-  KDE Discover), Flathub, and AppStream-aware store fronts key off this ID.
-  It is the app's permanent name across every distribution channel — treat it
-  as immutable once published, since changing it orphans installed copies.
-
-  The Flatpak installs this file as /app/share/metainfo/<id>.metainfo.xml next
-  to flatpak/<id>.desktop. The snap keeps its own snap/gui/stickynotes.desktop.
-
-  Screenshot URLs point at a release tag so they never change under the store.
-  When cutting a release: add a <release> entry here, and if the screenshots
-  change, move their URLs to the new tag.
--->
+<!-- The app ID is permanent: changing it orphans installed copies. Screenshot URLs
+     point at a release tag; add a <release> entry for every version. -->
 <component type="desktop-application">
   <id>com.dabobrotosarkar.StickyNotes</id>
 
