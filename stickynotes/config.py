@@ -3,17 +3,25 @@
 APP_NAME = "StickyNotesApp"
 ORG_NAME = "dstushar7"
 
+# v4 palette: same seven colours, a touch softer, with text tinted toward each
+# hue so a note reads as paper rather than plastic. Every text/body pair clears
+# WCAG AA (4.5:1). "dark" marks the one theme that needs light chrome.
+#
+# DATA SAFETY: notes store the theme by NAME (e.g. "yellow"), never by colour,
+# so changing these values only changes how existing notes look. Never rename
+# or remove a key here — a note saved with an unknown name falls back to
+# DEFAULT_THEME (see utils.get_theme), which would silently recolour it.
 THEMES = {
-    "yellow":   {"bg": "#FFF176", "title": "#F9E44A", "text": "#1a1a1a"},
-    "green":    {"bg": "#B5EBBF", "title": "#8FD9A0", "text": "#1a1a1a"},
-    "pink":     {"bg": "#F9B8C6", "title": "#F48FAA", "text": "#1a1a1a"},
-    "purple":   {"bg": "#D8B8F9", "title": "#BC8FF5", "text": "#1a1a1a"},
-    "blue":     {"bg": "#B3E5FC", "title": "#80D0F5", "text": "#1a1a1a"},
-    "gray":     {"bg": "#E0E0E0", "title": "#BDBDBD", "text": "#1a1a1a"},
-    "charcoal": {"bg": "#4A4A4A", "title": "#333333", "text": "#f0f0f0"},
+    "yellow":   {"name": "Yellow",   "bg": "#FFF39C", "title": "#FBE36E", "text": "#2B2410", "dark": False},
+    "green":    {"name": "Green",    "bg": "#C6EFCF", "title": "#A3E2B2", "text": "#12291A", "dark": False},
+    "pink":     {"name": "Pink",     "bg": "#FBCAD5", "title": "#F6A9BC", "text": "#36111B", "dark": False},
+    "purple":   {"name": "Purple",   "bg": "#E0CCFB", "title": "#CBAAF7", "text": "#24113D", "dark": False},
+    "blue":     {"name": "Blue",     "bg": "#C4EAFC", "title": "#9AD8F6", "text": "#0E2633", "dark": False},
+    "gray":     {"name": "Gray",     "bg": "#E6E6E6", "title": "#CFCFCF", "text": "#1E1E1E", "dark": False},
+    "charcoal": {"name": "Charcoal", "bg": "#3C3D41", "title": "#2E2F33", "text": "#F1F1F1", "dark": True},
 }
 DEFAULT_THEME = "yellow"
-TITLE_BAR_HEIGHT = 38           # taller bar gives the floating chip buttons room to cast a shadow
+TITLE_BAR_HEIGHT = 38           # unchanged since v3: a collapsed note's saved height derives from it
 SHADOW_GUTTER = 12          # transparent margin for the drop shadow
 RESIZE_ZONE = 16            # >= SHADOW_GUTTER so resize grip reaches the visible note edge
 MIN_NOTE_WIDTH = 160
@@ -31,16 +39,45 @@ AUTO_SEED_WORD_COUNT = 2    # words pulled from the first body line as the smart
 TITLE_DRAG_SPACER_WIDTH = 40  # reserved drag/collapse grab area on the right of the title
 
 # Tray menu
-TRAY_MENU_NOTE_LIMIT = 10   # max number of notes listed in the tray menu
 
 # Persistence timing
 SAVE_DEBOUNCE_MS = 500       # delay after the last move/resize before flushing to QSettings
+
+# How long after an edge-resize goes quiet before the note's size is locked
+# again (see StickyNote._lock_size). Long enough that a pause mid-drag doesn't
+# freeze the resize under the pointer, short enough to close the window in
+# which a tiling shortcut could still act on the note.
+SIZE_RELOCK_DELAY_MS = 1500
 
 # Delete confirmation
 DELETE_CONFIRM_WINDOW_MS = 4000   # how long the "armed" state stays armed before reverting
 
 # Shape tokens
-CORNER_RADIUS_PX = 8         # rounded-corner radius used by the note body, title bar, panels
+CORNER_RADIUS_PX = 12        # note body + title bar; matches current GNOME/Ubuntu windows
+PANEL_RADIUS_PX = 14         # options menu, toast
+
+# Per-note opacity (v4). Only the note's paper fades — text, checkboxes and
+# buttons stay solid — and only while the note is idle: hovering it or typing
+# in it shows it at 100%. Stored per note under notes/<id>/opacity; a note
+# without the key (every note saved before v4) is fully opaque.
+OPACITY_MIN = 50             # below this, light notes stop reading as notes
+OPACITY_MAX = 100
+OPACITY_STEP = 5
+OPACITY_FADE_MS = 180        # idle <-> solid transition
+
+# How long a deleted note can be brought back from the "Note deleted · Undo"
+# toast. The note's saved values are held in memory only for this window;
+# deletion itself is unchanged (the QSettings group is removed immediately).
+UNDO_DELETE_MS = 6000
+
+# "Bring forward" glow when a note is picked from All notes / the tray menu.
+FLASH_MS = 900
+
+# How often the idle footer's "Edited 5 min ago" refreshes.
+EDITED_LABEL_REFRESH_MS = 30_000
+
+# Tray menu: how many recently edited notes are listed directly.
+TRAY_MENU_RECENT_COUNT = 5
 
 # Shadow profiles — (blur radius, vertical offset, alpha 0–255) tuples.
 # Each profile is tuned for the silhouette it sits behind:
@@ -52,6 +89,23 @@ SHADOW_BUTTON_CHIP    = (6,  2, 90)
 SHADOW_BODY_EXPANDED  = (24, 5, 130)
 SHADOW_BODY_COLLAPSED = (14, 4, 175)
 SHADOW_PANEL          = (16, 4, 80)
+
+# QSettings key for the app-global "hide notes from the dock" preference.
+# App-level, deliberately not per-note: the dock shows an app as running if ANY
+# of its windows is listed, so hiding only some notes would achieve nothing.
+SETTING_HIDE_FROM_DOCK = "hide_from_dock"
+
+# QSettings key for the last app version this user launched. Drives the
+# one-time "What's new" note (see whats_new.py).
+SETTING_LAST_SEEN_VERSION = "last_seen_version"
+
+# QSettings key (v4) for the colour of notes created from the tray / All notes.
+# Absent for every pre-v4 install, which reads as DEFAULT_THEME — the same
+# colour those versions always used. The + on a note still copies that note.
+SETTING_DEFAULT_THEME = "default_theme"
+
+# Share: how long the Share button reads "✓ Copied" before the panel closes.
+SHARE_COPIED_FEEDBACK_MS = 1500
 
 # Bound shortcuts — single source of truth for every QShortcut the app installs.
 #
@@ -141,11 +195,24 @@ TOOLTIP_FONT_SIZE_PT = 9               # matches the secondary-text size used in
 # a one-line tooltip 47px tall vs 33px here, which reads visibly puffy.
 TOOLTIP_PADDING = "0px 6px"
 
-# Legacy context-menu colors kept for tray menu styling
-MENU_BACKGROUND_COLOR = "#ffffff"
-MENU_TEXT_COLOR = "#000000"
-MENU_TEXT_DISABLED_COLOR = "#999999"
-MENU_HOVER_BACKGROUND_COLOR = "#0078d4"
-MENU_HOVER_TEXT_COLOR = "#ffffff"
-MENU_BORDER_COLOR = "#ccc"
-MENU_SEPARATOR_COLOR = "#dddddd"
+# App chrome (options menu, All notes, Settings, Receive, toast) follows the
+# desktop's light/dark preference; notes keep their own colours either way.
+# Picked at runtime by utils.chrome_palette(). Opaque on purpose — see the
+# XWayland translucency note on the options menu.
+CHROME_LIGHT = {
+    "window": "#FAFAFA", "surface": "#FFFFFF", "raised": "#F1F2F4", "hover": "#E9EBEE",
+    "line": "#DEE1E6", "text": "#1B1D21", "muted": "#5F6672",
+    "danger": "#C62828", "danger_soft": "#FDECEC", "ok": "#1E7B3C",
+    "switch_on": "#3A7D44", "switch_off": "#CDD1D7",
+}
+CHROME_DARK = {
+    "window": "#1F2126", "surface": "#2A2D33", "raised": "#33363D", "hover": "#3E424A",
+    "line": "#3A3E46", "text": "#ECEEF1", "muted": "#A3A9B4",
+    "danger": "#FF8A80", "danger_soft": "#43211F", "ok": "#6FD38F",
+    "switch_on": "#4F9A5A", "switch_off": "#555A63",
+}
+# Primary buttons: the sticky-note yellow with near-black text, used sparingly
+# so it never competes with the notes themselves.
+ACCENT = "#F5C400"
+ON_ACCENT = "#1A1A1A"
+DONATE_GREEN = "#1E7B3C"

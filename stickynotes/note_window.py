@@ -1,33 +1,89 @@
 # stickynotes/note_window.py
 
+import re
 import uuid
 from datetime import datetime, timezone
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTextEdit, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QAbstractButton,
     QLabel, QLineEdit, QStackedLayout, QSizePolicy, QGraphicsDropShadowEffect,
-    QApplication, QDialog, QCheckBox, QFrame,
+    QApplication, QFrame, QSlider,
 )
 from PyQt6.QtCore import (
-    QSettings, pyqtSignal, Qt, QPoint, QRect, QSize, QByteArray, QUrl,
-    QPropertyAnimation, QParallelAnimationGroup, QEasingCurve,
+    QSettings, pyqtSignal, Qt, QPoint, QRect, QRectF, QPointF, QSize, QByteArray,
+    QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QVariantAnimation,
     QEvent, QTimer,
 )
 from PyQt6.QtGui import (
     QColor, QTextListFormat, QTextBlockFormat, QTextCursor, QKeySequence,
-    QShortcut, QFont, QFontMetrics, QDesktopServices, QPalette,
+    QShortcut, QFont, QFontMetrics, QFontMetricsF, QPainter, QPen, QCursor,
+    QSyntaxHighlighter, QTextCharFormat, QPolygonF,
 )
 
-from . import __version__
 from . import config
 from . import utils
-from . import autostart
 from . import xwm
-from .widgets import FloatingButton
+from . import sharing
+from .widgets import FloatingButton, MenuRow
+from .richtext import sanitized_fragment, style_for_indent
+
+
+def rgba(hex_color: str, alpha: float) -> str:
+    """'#RRGGBB' + 0..1 alpha -> a stylesheet rgba() string."""
+    c = QColor(hex_color)
+    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {max(0, min(255, round(alpha * 255)))})"
+
+
+def edited_phrase(iso: str) -> str:
+    """'Edited just now' / '5 min ago' / '3 hr ago' / 'yesterday' / '12 Oct'
+    from a last_edited ISO timestamp. Display only — never written back."""
+    try:
+        then = datetime.fromisoformat(iso)
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return ""
+    now = datetime.now(timezone.utc)
+    secs = (now - then).total_seconds()
+    if secs < 60:
+        return "Edited just now"
+    if secs < 3600:
+        return f"Edited {int(secs // 60)} min ago"
+    local_then, local_now = then.astimezone(), now.astimezone()
+    if local_then.date() == local_now.date():
+        return f"Edited {int(secs // 3600)} hr ago"
+    if (local_now.date() - local_then.date()).days == 1:
+        return "Edited yesterday"
+    if local_then.year == local_now.year:
+        return f"Edited {local_then.day} {local_then.strftime('%b')}"
+    return f"Edited {local_then.day} {local_then.strftime('%b %Y')}"
+
+
+def checklist_progress(document) -> tuple:
+    """(done, total) checklist items in `document`."""
+    done = total = 0
+    block = document.begin()
+    while block.isValid():
+        if _is_checklist_block(block):
+            total += 1
+            if block.blockFormat().marker() == _MARKER_CHECKED:
+                done += 1
+        block = block.next()
+    return done, total
 
 
 def _now_iso() -> str:
     """Timezone-aware UTC ISO-8601 timestamp used for last_edited."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def default_note_size() -> tuple:
+    """(width, height) for a note with no saved geometry. Scales with the
+    screen so notes don't look tiny on 1440p/4K or oversized on small laptops."""
+    screen = QApplication.primaryScreen().availableGeometry()
+    return (
+        max(280, min(480, screen.width() // 8)),
+        max(280, min(480, screen.height() // 6)),
+    )
 
 
 def derive_title_from_text(plain_text: str) -> str:
@@ -42,18 +98,6 @@ def derive_title_from_text(plain_text: str) -> str:
                 if derived:
                     return derived
     return config.DEFAULT_NOTE_TITLE
-
-
-# Bullet styles cycled by sublist depth so nested levels are visually distinct.
-_LIST_STYLES = (
-    QTextListFormat.Style.ListDisc,
-    QTextListFormat.Style.ListCircle,
-    QTextListFormat.Style.ListSquare,
-)
-
-
-def _style_for_indent(indent: int) -> QTextListFormat.Style:
-    return _LIST_STYLES[(max(1, indent) - 1) % len(_LIST_STYLES)]
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +130,161 @@ def _is_checklist_block(block) -> bool:
 def _cursor_in_checklist(cursor: QTextCursor) -> bool:
     return _is_checklist_block(cursor.block())
 
+
+# ---------------------------------------------------------------------------
+# Typed lists (WhatsApp-style auto-continue)
+#
+# A line the user TYPES as "1. milk" or "- milk" is plain text, not a
+# QTextList, so Qt does nothing special on Enter. We continue it ourselves:
+#
+#   "3. eggs"   + Enter -> next line starts "4. "     (also "3)")
+#   "c. eggs"   + Enter -> next line starts "d. "     (a-z, A-Z; stops at z)
+#   "  - eggs"  + Enter -> next line starts "  - "    (indent kept)
+#   "4. "       + Enter -> empty item: step out one level, or end the list
+#   Tab / Shift+Tab     -> nest / un-nest the item (see renest_prefix)
+#
+# Numbered and lettered items are renumbered after Enter, Tab/Shift+Tab and
+# deletions, so inserting "2. bread" above "2. eggs" turns it into "3. eggs".
+# A "level" is the run of same-kind items at one indent; nested lines inside
+# it are skipped over, and a blank or plain line ends it.
+#
+# Deliberately left as plain text rather than converted to a real list: the
+# sanitiser collapses real numbered lists to bullets, while typed numbers
+# survive copy, paste and Share exactly as written.
+# ---------------------------------------------------------------------------
+_TYPED_ITEM_RE = re.compile(
+    r"^([ \t]*)"                          # 1 indent
+    r"(?:(\d{1,9}|[A-Za-z])([.)])"        # 2,3 "12." "12)" "c." "C)"
+    r"|([-*+•◦▪‣–]))"                     # 4   bullet glyph
+    r"([ \t]+)"                           # 5   gap — required, so "1.5", "-3", "e.g." don't match
+)
+_LINE_SEPARATOR = "\u2028"   # what Shift+Enter inserts outside a list
+_INDENT_UNIT = "    "        # one nesting level of a typed list
+_SIBLING_LOOKBACK = 50       # lines scanned upward for an item at the same level
+
+
+def _indent_width(indent: str) -> int:
+    return len(indent.expandtabs(len(_INDENT_UNIT)))
+
+
+def _outdented(indent: str) -> str:
+    """`indent` one level shallower: drop a trailing tab, or up to one unit of spaces."""
+    if indent.endswith("\t"):
+        return indent[:-1]
+    spaces = len(indent) - len(indent.rstrip(" "))
+    return indent[:len(indent) - min(spaces, len(_INDENT_UNIT))]
+
+
+def _next_token(token: str):
+    """"3" -> "4" (padding kept: "09" -> "10"), "c" -> "d"; None after "z"."""
+    if token.isdigit():
+        return str(int(token) + 1).zfill(len(token))
+    return None if token in "zZ" else chr(ord(token) + 1)
+
+
+def _first_token(token: str) -> str:
+    """Start of a fresh list of the same kind as `token`: "1", "a" or "A"."""
+    if token.isdigit():
+        return "1"
+    return "a" if token.islower() else "A"
+
+
+def typed_list_prefix(line: str):
+    """If `line` starts like a typed list item, return
+    (prefix_length, prefix_for_next_item); otherwise None."""
+    m = _TYPED_ITEM_RE.match(line)
+    if m is None:
+        return None
+    indent, token, delim, bullet, gap = m.groups()
+    if token is None:
+        marker = bullet
+    else:
+        nxt = _next_token(token)
+        if nxt is None:
+            return None
+        marker = nxt + delim
+    return m.end(), f"{indent}{marker}{gap}"
+
+
+def _same_kind(a: str, b: str) -> bool:
+    """Both numbers, or both letters of the same case."""
+    if a.isdigit() or b.isdigit():
+        return a.isdigit() and b.isdigit()
+    return a.islower() == b.islower()
+
+
+def _line_indent_width(line: str) -> int:
+    return _indent_width(line[:len(line) - len(line.lstrip(" \t"))])
+
+
+def _level_context(indent: str, lines_above):
+    """(sibling, parent) for a line at `indent`: the match of the nearest
+    typed item above at the same indent (looking past deeper, nested lines),
+    or else of the shallower typed item it is nested under. At most one is
+    set; both are None if a plain line or blank line comes first."""
+    width = _indent_width(indent)
+    for i, line in enumerate(lines_above):
+        if i >= _SIBLING_LOOKBACK:
+            break
+        line_width = _line_indent_width(line)
+        if line.strip() and line_width > width:
+            continue   # a nested item or its text — keep looking up
+        m = _TYPED_ITEM_RE.match(line)
+        if m is None:
+            break
+        return (m, None) if line_width == width else (None, m)
+    return None, None
+
+
+def _item_above(indent: str, lines_above):
+    """Match of the nearest typed item above at the same indent, or None."""
+    return _level_context(indent, lines_above)[0]
+
+
+def renest_prefix(line: str, deeper: bool, lines_above=()):
+    """For typed item `line` moved one level deeper (Tab) or shallower
+    (Shift+Tab), return (prefix_length, new_prefix); None if `line` isn't an
+    item or is already at the left edge.
+
+    At its new level the item continues the item already there, adopting its
+    style ("2." above -> "3."); with none, it starts over: "1.", "a.", "A.",
+    or keeps its bullet. `lines_above` yields the lines above, nearest first.
+    """
+    m = _TYPED_ITEM_RE.match(line)
+    if m is None:
+        return None
+    indent, token, delim, bullet, gap = m.groups()
+    if deeper:
+        new_indent = indent + _INDENT_UNIT
+    elif indent:
+        new_indent = _outdented(indent)
+    else:
+        return None
+
+    marker = None
+    above = _item_above(new_indent, lines_above)
+    if above is not None:
+        if above.group(2) is None:
+            marker = above.group(4)
+        else:
+            nxt = _next_token(above.group(2))
+            marker = nxt and nxt + above.group(3)
+    if marker is None:
+        marker = bullet if token is None else _first_token(token) + delim
+    return m.end(), f"{new_indent}{marker}{gap}"
+
+
+def _lines_above(block, line_start: int):
+    """Lines above position `line_start` of `block`, nearest first, across
+    Shift+Enter separators and earlier blocks."""
+    if line_start:
+        yield from reversed(block.text()[:line_start].split(_LINE_SEPARATOR)[:-1])
+    block = block.previous()
+    while block.isValid():
+        yield from reversed(block.text().split(_LINE_SEPARATOR))
+        block = block.previous()
+
+
 # ---------------------------------------------------------------------------
 # Resize zone ids
 # ---------------------------------------------------------------------------
@@ -116,9 +315,120 @@ _EDGES = {
 
 
 # ---------------------------------------------------------------------------
-# NoteTextEdit — Shift+Enter list-break, Tab/Shift+Tab sublist nesting
+# NoteTextEdit — Shift+Enter list-break, Tab/Shift+Tab sublist nesting,
+# Enter continues typed "1. " / "- " lists
 # ---------------------------------------------------------------------------
+class ChecklistHighlighter(QSyntaxHighlighter):
+    """Fades and strikes through ticked checklist items.
+
+    DISPLAY ONLY. A syntax highlighter's formats live on the text layout, not
+    in the document, so they never reach toHtml() — the saved note, Share text
+    and undo history are exactly what they were before v4. (StickyNote's
+    _on_body_changed ignores the textChanged a re-highlight emits, so this
+    never bumps last_edited either.)
+    """
+
+    def __init__(self, document):
+        super().__init__(document)
+        self._fmt = QTextCharFormat()
+        self._fmt.setFontStrikeOut(True)
+        self.set_ink("#1a1a1a")
+
+    def set_ink(self, text_color: str):
+        ink = QColor(text_color)
+        ink.setAlpha(125)
+        self._fmt.setForeground(ink)
+
+    def highlightBlock(self, text):   # noqa: N802 (Qt naming)
+        block = self.currentBlock()
+        if text and _is_checklist_block(block) and block.blockFormat().marker() == _MARKER_CHECKED:
+            self.setFormat(0, len(text), self._fmt)
+
+
 class NoteTextEdit(QTextEdit):
+    """Rich-text body. Besides the list keyboard handling below, it paints the
+    checklist boxes itself (see paintEvent)."""
+
+    highlighter = None   # set by StickyNote; re-run when a box is ticked
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Colours for the painted checkboxes, kept in step with the note's
+        # current paper colour/opacity by StickyNote._apply_surface.
+        self._surface = QColor("#FFF39C")
+        self._ink = QColor("#2B2410")
+
+    def set_paint_colors(self, surface: QColor, ink: QColor):
+        self._surface = QColor(surface)
+        self._ink = QColor(ink)
+        self.viewport().update()
+
+    def paintEvent(self, event):   # noqa: N802 (Qt naming)
+        """Draw rounded checkboxes over Qt's own square markers.
+
+        Qt draws checklist markers itself, without going through QStyle (there
+        is a "### Qt7" note about this in QTextDocumentLayout), so they can't be
+        restyled. Instead the marker band is re-filled with the note's paper —
+        in Source mode, so on a see-through note it ends up exactly as
+        translucent as the paper around it — and our own box is drawn on top.
+        Purely visual: nothing about the document changes.
+        """
+        super().paintEvent(event)
+        doc = self.document()
+        band = doc.indentWidth() or config.LIST_INDENT_PX
+        layout = doc.documentLayout()
+        dy = -self.verticalScrollBar().value()
+        visible = self.viewport().rect()
+        painter = None
+        block = doc.begin()
+        while block.isValid():
+            if _is_checklist_block(block) and block.layout() is not None and block.layout().lineCount():
+                rect = layout.blockBoundingRect(block)
+                if rect.bottom() + dy >= 0 and rect.top() + dy <= visible.bottom():
+                    if painter is None:
+                        painter = QPainter(self.viewport())
+                        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    self._paint_box(painter, block, band, rect.top() + dy)
+            block = block.next()
+        if painter is not None:
+            painter.end()
+
+    def _paint_box(self, p: QPainter, block, band: float, block_top: float):
+        line = block.layout().lineAt(0)
+        text_x = self.cursorRect(QTextCursor(block)).left()
+        top = block_top + line.y()
+        height = line.height()
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        p.fillRect(QRectF(text_x - band - 2, top, band + 1, height), self._surface)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+
+        size = max(12.0, min(band - 3.0, QFontMetricsF(self.font()).height() * 0.62))
+        box = QRectF(text_x - band + (band - size) / 2 - 2, top + (height - size) / 2, size, size)
+        checked = block.blockFormat().marker() == _MARKER_CHECKED
+        ink = QColor(self._ink)
+        if checked:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(ink)
+            p.drawRoundedRect(box, size * 0.28, size * 0.28)
+            tick = QPen(QColor(self._surface.red(), self._surface.green(), self._surface.blue()))
+            tick.setWidthF(max(1.6, size * 0.14))
+            tick.setCapStyle(Qt.PenCapStyle.RoundCap)
+            tick.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(tick)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPolyline(QPolygonF([
+                QPointF(box.left() + size * 0.24, box.top() + size * 0.52),
+                QPointF(box.left() + size * 0.43, box.top() + size * 0.70),
+                QPointF(box.left() + size * 0.76, box.top() + size * 0.32),
+            ]))
+        else:
+            ink.setAlpha(175)
+            pen = QPen(ink)
+            pen.setWidthF(1.6)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(box.adjusted(0.8, 0.8, -0.8, -0.8), size * 0.26, size * 0.26)
+
     def keyPressEvent(self, event):
         key = event.key()
         mods = event.modifiers()
@@ -156,7 +466,232 @@ class NoteTextEdit(QTextEdit):
                 new_cursor.setBlockFormat(fmt)
             return
 
+        # Enter / Tab / Shift+Tab on a typed "1. " / "- " line (see
+        # typed_list_prefix). Real lists never get here: Qt continues them
+        # and the Tab branch above nests them.
+        no_mods = not (mods & (Qt.KeyboardModifier.ControlModifier
+                               | Qt.KeyboardModifier.AltModifier
+                               | Qt.KeyboardModifier.MetaModifier))
+        if no_mods and not cursor.hasSelection() and cursor.currentList() is None:
+            if (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and not (mods & Qt.KeyboardModifier.ShiftModifier)
+                    and self._continue_typed_list(cursor)):
+                return
+            if (key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+                    and self._renest_typed_item(cursor, deeper=(
+                        key == Qt.Key.Key_Tab
+                        and not (mods & Qt.KeyboardModifier.ShiftModifier)))):
+                return
+
+        # Deleting (Backspace, Delete, Cut) can remove whole items, leaving a
+        # gap in the numbering. Let Qt delete, then close the gap — folded
+        # into the deletion's undo step so one Ctrl+Z restores both.
+        if (key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete)
+                or event.matches(QKeySequence.StandardKey.Cut)):
+            super().keyPressEvent(event)
+            after = self.textCursor()
+            if after.currentList() is None:
+                line_start, _, _ = self._typed_line(after)
+                after.joinPreviousEditBlock()
+                self._renumber_level(after.block(), line_start)
+                after.endEditBlock()
+            return
+
         super().keyPressEvent(event)
+
+    # -- typed-list renumbering ---------------------------------------------
+
+    @staticmethod
+    def _line_text(block, line_start: int) -> str:
+        text = block.text()
+        end = text.find(_LINE_SEPARATOR, line_start)
+        return text[line_start:] if end == -1 else text[line_start:end]
+
+    @staticmethod
+    def _lines_below(block, line_start: int):
+        """(block, line_start) of each line after the given one, top-down.
+        Read lazily from the document, so the caller may edit the line it was
+        just handed before asking for the next."""
+        while True:
+            end = block.text().find(_LINE_SEPARATOR, line_start)
+            if end != -1:
+                line_start = end + 1
+            else:
+                block = block.next()
+                if not block.isValid():
+                    return
+                line_start = 0
+            yield block, line_start
+
+    def _renumber_level(self, block, line_start: int):
+        """Renumber the numbered/lettered item on this line and the rest of
+        its level below it so they count on without gaps or repeats.
+
+        The item continues the item above it at its level; the first item
+        nested under another restarts at 1/a/A; a list's first item keeps its
+        own number, so a list deliberately started at "5." stays at 5.
+        Callers own the undo grouping."""
+        m = _TYPED_ITEM_RE.match(self._line_text(block, line_start))
+        if m is None or m.group(2) is None:
+            return   # not a numbered/lettered item — bullets have nothing to fix
+        indent, token, delim = m.group(1), m.group(2), m.group(3)
+        width = _indent_width(indent)
+
+        sibling, parent = _level_context(indent, _lines_above(block, line_start))
+        if (sibling is not None and sibling.group(2) is not None
+                and sibling.group(3) == delim and _same_kind(sibling.group(2), token)):
+            expected = _next_token(sibling.group(2))
+        elif parent is not None:
+            expected = _first_token(token)
+        else:
+            expected = token
+
+        position = (block, line_start)
+        below = self._lines_below(block, line_start)
+        while position is not None:
+            blk, start = position
+            line = self._line_text(blk, start)
+            if line.strip() and _line_indent_width(line) > width:
+                position = next(below, None)
+                continue   # nested under this level — skip, don't stop
+            lm = _TYPED_ITEM_RE.match(line)
+            if (lm is None or _indent_width(lm.group(1)) != width
+                    or lm.group(2) is None or lm.group(3) != delim
+                    or not _same_kind(lm.group(2), token) or expected is None):
+                return   # end of this level's run
+            if lm.group(2) != expected:
+                pos = blk.position() + start + len(lm.group(1))
+                # A caret sitting exactly where the number starts would be
+                # carried past the new digits by Qt; hold it in place.
+                caret = self.textCursor()
+                pin = not caret.hasSelection() and caret.position() == pos
+                edit = QTextCursor(self.document())
+                edit.setPosition(pos)
+                edit.setPosition(pos + len(lm.group(2)), QTextCursor.MoveMode.KeepAnchor)
+                edit.insertText(expected, self._line_format(blk, start))
+                if pin:
+                    caret.setPosition(pos)
+                    self.setTextCursor(caret)
+            expected = _next_token(expected)
+            position = next(below, None)
+
+    def _renumber_after_move(self, block, line_start: int, old_width: int):
+        """After the item on this line changed level: renumber its new level,
+        then the level it left — the first line below back at the old width,
+        unless a shallower line ends that level first."""
+        self._renumber_level(block, line_start)
+        for blk, start in self._lines_below(block, line_start):
+            line = self._line_text(blk, start)
+            if not line.strip():
+                return
+            line_width = _line_indent_width(line)
+            if line_width > old_width:
+                continue
+            if line_width == old_width:
+                self._renumber_level(blk, start)
+            return
+
+    @staticmethod
+    def _typed_line(cursor: QTextCursor):
+        """(line_start, line_end, line) of the line holding the cursor, as
+        offsets into its block. Shift+Enter splits a block into several lines
+        with U+2028, so a line is only the stretch between separators."""
+        text = cursor.block().text()
+        col = cursor.positionInBlock()
+        line_start = text.rfind(_LINE_SEPARATOR, 0, col) + 1
+        line_end = text.find(_LINE_SEPARATOR, col)
+        if line_end == -1:
+            line_end = len(text)
+        return line_start, line_end, text[line_start:line_end]
+
+    @staticmethod
+    def _line_format(block, line_start: int):
+        """Char format of the line's first character — what a rewritten
+        marker is given, so a plain "1." stays plain after a bold item."""
+        probe = QTextCursor(block)
+        probe.setPosition(block.position() + line_start + 1)
+        return probe.charFormat()
+
+    def _move_item(self, cursor, line_start, prefix_len, new_prefix):
+        """Swap the marker of the item on the cursor's line for `new_prefix`
+        (which puts it on another level), keeping the cursor at the same spot
+        in the item's text, then renumber both levels. One undo step."""
+        block = cursor.block()
+        base = block.position() + line_start
+        old_width = _line_indent_width(self._line_text(block, line_start))
+        text_offset = max(0, cursor.position() - base - prefix_len)
+        fmt = self._line_format(block, line_start)
+        cursor.beginEditBlock()
+        cursor.setPosition(base)
+        cursor.setPosition(base + prefix_len, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(new_prefix, fmt)
+        cursor.setPosition(base + len(new_prefix) + text_offset)
+        self._renumber_after_move(block, line_start, old_width)
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+
+    def _continue_typed_list(self, cursor: QTextCursor) -> bool:
+        """Handle Enter on a typed list line. Returns False to let Qt do an
+        ordinary Enter (not a list line, or the cursor is inside the marker)."""
+        block = cursor.block()
+        line_start, line_end, line = self._typed_line(cursor)
+        found = typed_list_prefix(line)
+        if found is None:
+            return False
+        prefix_len, next_prefix = found
+        if cursor.positionInBlock() - line_start < prefix_len:
+            return False   # cursor before/inside "1. " — plain Enter, no new marker
+
+        if not line[prefix_len:].strip():
+            # Empty item: step out a level if nested, else finish the list
+            # by dropping the marker and staying on the line.
+            outer = renest_prefix(line, False, _lines_above(block, line_start))
+            if outer is not None:
+                self._move_item(cursor, line_start, prefix_len, outer[1])
+            else:
+                base = block.position()
+                cursor.setPosition(base + line_start)
+                cursor.setPosition(base + line_end, QTextCursor.MoveMode.KeepAnchor)
+                cursor.removeSelectedText()
+                self.setTextCursor(cursor)
+            return True
+
+        # The new marker copies the previous marker's formatting, while the
+        # text typed after it keeps whatever format was active at the cursor
+        # — the same as Qt's own Enter.
+        marker_fmt = self._line_format(block, line_start)
+        typing_fmt = cursor.charFormat()
+        cursor.beginEditBlock()
+        cursor.insertBlock()
+        cursor.insertText(next_prefix, marker_fmt)
+        cursor.setCharFormat(typing_fmt)
+        # The new item now holds the next number; push the ones below along.
+        self._renumber_level(cursor.block(), 0)
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+        return True
+
+    def _renest_typed_item(self, cursor: QTextCursor, deeper: bool) -> bool:
+        """Tab / Shift+Tab anywhere on a typed list line. Returns False to let
+        Qt handle the key (not a list line)."""
+        line_start, _, line = self._typed_line(cursor)
+        found = renest_prefix(line, deeper, _lines_above(cursor.block(), line_start))
+        if found is None:
+            # Shift+Tab on a top-level item: nothing to do, but still ours —
+            # Qt would otherwise move keyboard focus out of the note.
+            return _TYPED_ITEM_RE.match(line) is not None
+        self._move_item(cursor, line_start, *found)
+        return True
+
+    def insertFromMimeData(self, source):
+        """Paste / drop. Rich content is sanitised (see richtext);
+        plain text and anything without HTML takes Qt's normal path."""
+        if source.hasHtml():
+            self.textCursor().insertFragment(sanitized_fragment(source.html()))
+            self.ensureCursorVisible()
+            return
+        super().insertFromMimeData(source)
 
     def _marker_block_at(self, pos):
         """Return the checklist block whose checkbox sits at viewport `pos`,
@@ -222,6 +757,8 @@ class NoteTextEdit(QTextEdit):
             else _MARKER_CHECKED
         )
         cursor.setBlockFormat(fmt)
+        if self.highlighter is not None:
+            self.highlighter.rehighlightBlock(block)
 
     def _break_out_of_list(self):
         cursor = self.textCursor()
@@ -262,142 +799,149 @@ class NoteTextEdit(QTextEdit):
 
         new_fmt = QTextListFormat()
         new_fmt.setIndent(new_indent)
-        new_fmt.setStyle(_style_for_indent(new_indent))
+        new_fmt.setStyle(style_for_indent(new_indent))
         cursor.createList(new_fmt)
 
 
 # ---------------------------------------------------------------------------
-# _DeleteButton — destructive action with a two-click confirm pattern.
+# OptionsPanel — the ••• menu.
 #
-# First click arms the button: text + visual state change to "Confirm Delete?"
-# in a fully red filled style. A second click within CONFIRM_WINDOW_MS emits
-# `confirmed`; if the timeout expires (or the panel closes) the button reverts
-# to its idle state. The two states are visually distinct on purpose — the
-# armed style is loud so the user can't miss that the next click is real.
+#   ( colour swatches )
+#   Opacity                                   [70%]
+#   ────────────●──────────────
+#   50%          text stays solid          100%
+#   ─────────────────────────────
+#   Keep on top / Unpin from top
+#   Collapse / Expand                Double-click bar
+#   Share…                           Copies as text
+#   Receive a note…
+#   ─────────────────────────────
+#   Delete note   (click twice: arms, then deletes)
+#
+# Opens BESIDE the note (right, else left) rather than over it, so the note
+# stays visible while the opacity slider previews the faded look live.
+#
+# Everything paints opaque inside an opaque body frame: on Wayland-via-
+# XWayland a translucent popup can fail to paint its own background under
+# children, letting the note behind bleed through anything semi-transparent.
+# Only the frame's rounded corners and the shadow margin are transparent.
 # ---------------------------------------------------------------------------
-class _DeleteButton(QPushButton):
+class _Swatch(QAbstractButton):
+    """A round colour swatch; ticked when it's the note's current colour."""
+
+    def __init__(self, theme_name: str, current: bool, parent=None):
+        super().__init__(parent)
+        self._theme = utils.get_theme(theme_name)
+        self._current = current
+        self.setFixedSize(26, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(self._theme.get("name", theme_name.capitalize()))
+        self.setAccessibleName(f"{self.toolTip()} colour")
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+    def paintEvent(self, _event):   # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        if self.underMouse() and not self._current:
+            r = QRectF(0, 0, self.width(), self.height())
+        p.setPen(QPen(QColor(0, 0, 0, 45), 1))
+        p.setBrush(QColor(self._theme["bg"]))
+        p.drawEllipse(r)
+        if self._current:
+            pen = QPen(QColor("#FFFFFF" if self._theme.get("dark") else "#2A2A2A"))
+            pen.setWidthF(2.2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            w = self.width()
+            p.drawPolyline(QPolygonF([
+                QPointF(w * 0.30, w * 0.52), QPointF(w * 0.45, w * 0.66), QPointF(w * 0.72, w * 0.36),
+            ]))
+
+
+class _DeleteRow(MenuRow):
+    """'Delete note' with the two-click confirm.
+
+    First click arms it ("Click again to delete", red fill, a bar draining
+    over DELETE_CONFIRM_WINDOW_MS); a second click within that window emits
+    `confirmed`. If the window runs out it quietly disarms.
+    """
     confirmed = pyqtSignal()
 
-    _IDLE_LABEL = "🗑  Delete Note"
-    _ARMED_LABEL = "✓  Click again to confirm"
-
-    def __init__(self, parent=None):
-        super().__init__(self._IDLE_LABEL, parent)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # No keyboard focus; this is purely a pointer action inside a popup.
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
+    def __init__(self, pal: dict, parent=None):
+        super().__init__("Delete note", parent=parent)
+        self._pal = pal
         self._armed = False
-        self._disarm_timer = QTimer(self)
-        self._disarm_timer.setSingleShot(True)
-        self._disarm_timer.setInterval(config.DELETE_CONFIRM_WINDOW_MS)
-        self._disarm_timer.timeout.connect(self._disarm)
-
+        self._remaining = 0.0
+        self.set_icon(utils.line_icon("trash", pal["danger"]))
+        self.setProperty("danger", True)
+        self._drain = QVariantAnimation(self)
+        self._drain.setDuration(config.DELETE_CONFIRM_WINDOW_MS)
+        self._drain.setStartValue(1.0)
+        self._drain.setEndValue(0.0)
+        self._drain.valueChanged.connect(self._on_drain)
+        self._drain.finished.connect(self._disarm)
         self.clicked.connect(self._on_clicked)
-        self._apply_idle_style()
 
     def _on_clicked(self):
         if self._armed:
-            self._disarm_timer.stop()
+            self._drain.stop()
             self.confirmed.emit()
         else:
-            self._arm()
-
-    def _arm(self):
-        self._armed = True
-        self.setText(self._ARMED_LABEL)
-        self._apply_armed_style()
-        self._disarm_timer.start()
+            self._armed = True
+            self.set_text("Click again to delete")
+            self.setProperty("armed", True)
+            self._repolish()
+            self._drain.start()
 
     def _disarm(self):
         self._armed = False
-        self.setText(self._IDLE_LABEL)
-        self._apply_idle_style()
+        self._remaining = 0.0
+        self.set_text("Delete note")
+        self.setProperty("armed", False)
+        self._repolish()
 
-    def _apply_idle_style(self):
-        # Opaque colors equivalent to the original rgba(220, 50, 60, α)
-        # composited against the panel's #ffffff background. Kept opaque on
-        # purpose: WA_TranslucentBackground on the OptionsPanel can fail to
-        # reliably paint the panel's white BG under child widgets on Wayland
-        # (via XWayland), causing the note's text to bleed through any
-        # translucent child. These hex values render IDENTICALLY to the
-        # original on the white panel but never leak content behind.
-        self.setStyleSheet("""
-            QPushButton {
-                background-color: #fceaec;
-                color: #c0341d;
-                border: 1px solid #f7d2d4;
-                border-radius: 8px;
-                padding: 8px 12px;
-                font-size: 10pt;
-                font-weight: 500;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background-color: #f9dadc;
-                border: 1px solid #f3b7bb;
-            }
-            QPushButton:pressed {
-                background-color: #f5c6c8;
-            }
-        """)
+    def _on_drain(self, value):
+        self._remaining = float(value)
+        self.update()
 
-    def _apply_armed_style(self):
-        self.setStyleSheet("""
-            QPushButton {
-                background-color: #d33f2f;
-                color: #ffffff;
-                border: 1px solid #b03224;
-                border-radius: 8px;
-                padding: 8px 12px;
-                font-size: 10pt;
-                font-weight: 600;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background-color: #c0341d;
-            }
-            QPushButton:pressed {
-                background-color: #a52a1c;
-            }
-        """)
+    def _repolish(self):
+        for w in (self, self.text_label):
+            w.style().unpolish(w)
+            w.style().polish(w)
+        self.update()
+
+    def paintEvent(self, event):   # noqa: N802
+        super().paintEvent(event)
+        if self._armed and self._remaining > 0:
+            p = QPainter(self)
+            p.fillRect(QRectF(0, self.height() - 3, self.width() * self._remaining, 3),
+                       QColor(self._pal["danger"]))
 
 
-# ---------------------------------------------------------------------------
-# OptionsPanel — floating popup below the "..." button
-# ---------------------------------------------------------------------------
 class OptionsPanel(QWidget):
     themeSelected = pyqtSignal(str)
+    opacityChanged = pyqtSignal(int)        # live, on every slider step
+    pinToggleRequested = pyqtSignal()
+    collapseToggleRequested = pyqtSignal()
     deleteRequested = pyqtSignal()
-    # Emitted on every dismissal (outside click, explicit close, theme pick).
+    shareRequested = pyqtSignal()
+    receiveRequested = pyqtSignal()
+    # Emitted on every dismissal (outside click, explicit close, action).
     # Carries self so the owner can verify identity before clearing its ref.
     dismissed = pyqtSignal(object)
 
-    _SWATCHES = [
-        ("yellow",   "#FFF176"),
-        ("green",    "#B5EBBF"),
-        ("pink",     "#F9B8C6"),
-        ("purple",   "#D8B8F9"),
-        ("blue",     "#B3E5FC"),
-        ("gray",     "#E0E0E0"),
-        ("charcoal", "#4A4A4A"),
-    ]
+    WIDTH = 260
+    SHADOW_MARGIN = 12
 
-    def __init__(self, current_theme: str, parent=None):
-        super().__init__(
-            parent,
-            Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint,
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        # Give the popup an alpha channel so the four corners outside the
-        # 8 px border-radius become genuinely transparent, instead of the
-        # default opaque widget background that otherwise frames the panel
-        # with four dark dots.
+    def __init__(self, *, theme: str, opacity: int, pinned: bool, pin_available: bool,
+                 collapsed: bool, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._dismissed = False
-        self._current_theme = current_theme
-        self._setup_ui()
-        self._apply_panel_style()
+        self._pal = utils.chrome_palette()
+        self._setup_ui(theme, opacity, pinned, pin_available, collapsed)
 
     def hideEvent(self, event):
         # Popup auto-dismisses on outside click via hide(), not close(), so
@@ -409,71 +953,205 @@ class OptionsPanel(QWidget):
             self.dismissed.emit(self)
             self.deleteLater()
 
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+    def _setup_ui(self, theme, opacity, pinned, pin_available, collapsed):
+        pal = self._pal
+        m = self.SHADOW_MARGIN
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(m, m, m, m)
 
-        # Row 1 — color swatches
-        swatch_row = QHBoxLayout()
-        swatch_row.setSpacing(4)
-        for name, color in self._SWATCHES:
-            btn = QPushButton("✓" if name == self._current_theme else "")
-            btn.setFixedSize(28, 28)
-            # Swatches carry no text (bar a tick on the active one), so the
-            # colour is the only cue — and at 28px "gray" and "charcoal" are
-            # hard to tell apart. Name them for hover and for screen readers.
-            label = name.capitalize()
-            btn.setToolTip(label)
-            btn.setAccessibleName(f"{label} theme")
-            tick_color = "#ffffff" if name == "charcoal" else "#333333"
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {color};
-                    border-radius: 14px;
-                    color: {tick_color};
-                    font-size: 9pt;
-                    border: none;
-                }}
-                QPushButton:hover {{
-                    border: 2px solid white;
-                }}
-            """)
-            btn.clicked.connect(lambda _checked, n=name: self.themeSelected.emit(n))
-            swatch_row.addWidget(btn)
-        layout.addLayout(swatch_row)
-
-        # Separator — reads as the boundary between picker and destructive
-        # action. Opaque hex equivalent of rgba(0, 0, 0, 0.10) composited on
-        # the panel's #ffffff (see _DeleteButton._apply_idle_style for why
-        # opaque colors are required here on Wayland-via-XWayland).
-        separator = QFrame(self)
-        separator.setFixedHeight(1)
-        separator.setStyleSheet("background-color: #e6e6e6;")
-        layout.addWidget(separator)
-
-        # Destructive action — two-click confirm pattern lives inside the button
-        delete_btn = _DeleteButton(self)
-        delete_btn.confirmed.connect(self.deleteRequested.emit)
-        layout.addWidget(delete_btn)
-
-        self.setFixedWidth(220)
-
-    def _apply_panel_style(self):
-        # Selector-scoped so we don't accidentally restyle every QWidget child
-        # (which would clobber the swatches and delete button stylesheets).
-        self.setObjectName("optionsPanel")
-        self.setStyleSheet(
-            f"QWidget#optionsPanel {{ background-color: #ffffff; "
-            f"border-radius: {config.CORNER_RADIUS_PX}px; }}"
-        )
-        shadow = QGraphicsDropShadowEffect(self)
+        body = QFrame(self)
+        body.setObjectName("panelBody")
+        body.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        shadow = QGraphicsDropShadowEffect(body)
         blur, offset_y, alpha = config.SHADOW_PANEL
         shadow.setBlurRadius(blur)
         shadow.setOffset(0, offset_y)
-        shadow.setColor(QColor(0, 0, 0, alpha))
-        self.setGraphicsEffect(shadow)
+        shadow.setColor(QColor(0, 0, 0, alpha + 30))
+        body.setGraphicsEffect(shadow)
+        outer.addWidget(body)
 
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(12, 12, 12, 10)
+        lay.setSpacing(2)
+
+        # Colours
+        swatches = QHBoxLayout()
+        swatches.setSpacing(6)
+        swatches.setContentsMargins(2, 0, 2, 8)
+        for name in config.THEMES:
+            sw = _Swatch(name, name == theme, body)
+            sw.clicked.connect(lambda _c=False, n=name: self.themeSelected.emit(n))
+            swatches.addWidget(sw)
+        lay.addLayout(swatches)
+
+        # Opacity
+        head = QHBoxLayout()
+        head.setContentsMargins(8, 2, 6, 4)
+        head.setSpacing(12)
+        icon = QLabel(body)
+        icon.setPixmap(utils.line_icon("opacity", pal["text"]).pixmap(QSize(18, 18)))
+        head.addWidget(icon)
+        head.addWidget(QLabel("Opacity", body), 1)
+        self._value = QLabel(f"{opacity}%", body)
+        self._value.setObjectName("valuePill")
+        self._value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._value.setMinimumWidth(46)
+        head.addWidget(self._value)
+        lay.addLayout(head)
+
+        self.slider = QSlider(Qt.Orientation.Horizontal, body)
+        self.slider.setRange(config.OPACITY_MIN, config.OPACITY_MAX)
+        self.slider.setSingleStep(config.OPACITY_STEP)
+        self.slider.setPageStep(config.OPACITY_STEP * 2)
+        self.slider.setValue(opacity)
+        self.slider.setAccessibleName("Opacity")
+        self.slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.slider.valueChanged.connect(self._on_slider)
+        slider_row = QHBoxLayout()
+        slider_row.setContentsMargins(8, 0, 8, 0)
+        slider_row.addWidget(self.slider)
+        lay.addLayout(slider_row)
+
+        ends = QHBoxLayout()
+        ends.setContentsMargins(8, 0, 8, 6)
+        for text, align in (("50%", Qt.AlignmentFlag.AlignLeft),
+                            ("text stays solid", Qt.AlignmentFlag.AlignHCenter),
+                            ("100%", Qt.AlignmentFlag.AlignRight)):
+            lbl = QLabel(text, body)
+            lbl.setObjectName("panelSmall")
+            lbl.setAlignment(align)
+            ends.addWidget(lbl, 1)
+        lay.addLayout(ends)
+        lay.addWidget(self._divider(body))
+
+        # Actions
+        self._pin_row = MenuRow("Unpin from top" if pinned else "Keep on top", parent=body)
+        self._pin_row.set_icon(utils.create_pin_icon(pal["text"], 18, filled=pinned))
+        if pin_available:
+            self._pin_row.clicked.connect(self._emit_and_close(self.pinToggleRequested))
+        else:
+            self._pin_row.setEnabled(False)
+            self._pin_row.setToolTip("Keep on top needs X11 or XWayland — unavailable in this session")
+        lay.addWidget(self._pin_row)
+
+        fold = MenuRow("Expand" if collapsed else "Collapse", "Double-click bar", body)
+        fold.set_icon(utils.line_icon("unfold" if collapsed else "fold", pal["text"]))
+        fold.clicked.connect(self._emit_and_close(self.collapseToggleRequested))
+        lay.addWidget(fold)
+
+        self._share_row = MenuRow("Share…", "Copies as text", body)
+        self._share_row.set_icon(utils.line_icon("share", pal["text"]))
+        self._share_row.setToolTip(
+            "Copy this note as text you can send to anyone.\n"
+            "Anyone with the text can read the note."
+        )
+        self._share_row.clicked.connect(self.shareRequested.emit)
+        lay.addWidget(self._share_row)
+
+        receive = MenuRow("Receive a note…", parent=body)
+        receive.set_icon(utils.line_icon("receive", pal["text"]))
+        receive.setToolTip("Add a note someone shared with you")
+        receive.clicked.connect(self.receiveRequested.emit)
+        lay.addWidget(receive)
+
+        lay.addWidget(self._divider(body))
+        delete = _DeleteRow(pal, body)
+        delete.confirmed.connect(self.deleteRequested.emit)
+        lay.addWidget(delete)
+
+        self.setFixedWidth(self.WIDTH + 2 * m)
+        self._apply_style()
+
+    def _emit_and_close(self, signal):
+        def handler():
+            self.close()
+            signal.emit()
+        return handler
+
+    def _on_slider(self, value: int):
+        # Snap to whole steps so the stored value is always 50, 55 … 100.
+        step = config.OPACITY_STEP
+        snapped = int(round(value / step) * step)
+        if snapped != value:
+            self.slider.setValue(snapped)
+            return
+        self._value.setText(f"{snapped}%")
+        self.slider.setAccessibleDescription(f"{snapped}%")
+        self.opacityChanged.emit(snapped)
+
+    @staticmethod
+    def _divider(parent) -> QFrame:
+        line = QFrame(parent)
+        line.setObjectName("panelDivider")
+        line.setFixedHeight(1)
+        return line
+
+    def show_share_copied(self):
+        """Confirm the copy in place, then get out of the way."""
+        self._share_row.set_text("Copied — paste it in any chat")
+        self._share_row.hint_label.hide()
+        self._share_row.set_icon(utils.line_icon("check", self._pal["ok"]))
+        self._share_row.setProperty("done", True)
+        for w in (self._share_row, self._share_row.text_label):
+            w.style().unpolish(w)
+            w.style().polish(w)
+        self._share_row.setEnabled(False)
+        QTimer.singleShot(config.SHARE_COPIED_FEEDBACK_MS, self.close)
+
+    def _apply_style(self):
+        pal = self._pal
+        r = config.PANEL_RADIUS_PX
+        self.setStyleSheet(f"""
+            QFrame#panelBody {{
+                background-color: {pal['surface']};
+                border: 1px solid {pal['line']};
+                border-radius: {r}px;
+            }}
+            QLabel {{ color: {pal['text']}; background: transparent; font-size: 10pt; }}
+            QLabel#panelSmall {{ color: {pal['muted']}; font-size: 8pt; }}
+            QLabel#menuHint {{ color: {pal['muted']}; font-size: 8.5pt; }}
+            QLabel#valuePill {{
+                background-color: {pal['raised']}; border-radius: 7px;
+                padding: 1px 6px; font-weight: 700; font-size: 9pt;
+            }}
+            QFrame#panelDivider {{ background-color: {pal['line']}; border: none; margin: 4px 0; }}
+            QWidget#menuRow {{ background-color: {pal['surface']}; border-radius: 9px; }}
+            QWidget#menuRow:hover {{ background-color: {pal['raised']}; }}
+            QWidget#menuRow:disabled QLabel {{ color: {pal['muted']}; }}
+            QWidget#menuRow[danger="true"] QLabel {{ color: {pal['danger']}; }}
+            QWidget#menuRow[armed="true"] {{ background-color: {pal['danger_soft']}; }}
+            QWidget#menuRow[armed="true"] QLabel {{ font-weight: 700; }}
+            QWidget#menuRow[done="true"] QLabel {{ color: {pal['ok']}; }}
+            QSlider {{ background: transparent; min-height: 22px; }}
+            QSlider::groove:horizontal {{ height: 4px; background: {pal['line']}; border-radius: 2px; }}
+            QSlider::sub-page:horizontal {{ background: {pal['text']}; border-radius: 2px; }}
+            QSlider::handle:horizontal {{
+                background: {pal['text']}; width: 16px; height: 16px;
+                margin: -6px 0; border-radius: 8px;
+            }}
+        """)
+
+    def place_beside(self, note: QWidget):
+        """Open to the right of the note's visible edge, else to its left,
+        top-aligned with it and kept on the note's screen."""
+        self.adjustSize()
+        g = config.SHADOW_GUTTER
+        m = self.SHADOW_MARGIN
+        top_left = note.mapToGlobal(QPoint(g, g))
+        vis_w = note.width() - 2 * g
+        screen = note.screen() or QApplication.primaryScreen()
+        area = screen.availableGeometry()
+        y = top_left.y() - m
+        x = top_left.x() + vis_w + 8 - m
+        if x + self.width() - m > area.right():
+            x = top_left.x() - self.width() - 8 + m
+        if x < area.left() - m:
+            # No room either side: drop down from the ••• end of the title bar.
+            x = top_left.x() + vis_w - self.width() + m
+            y = top_left.y() + config.TITLE_BAR_HEIGHT + 4 - m
+        y = max(area.top() - m, min(y, area.bottom() - self.height() + m))
+        x = max(area.left() - m, min(x, area.right() - self.width() + m))
+        self.move(QPoint(x, y))
 
 # ---------------------------------------------------------------------------
 # EditableTitleLabel — read-only label that swaps to a QLineEdit on click.
@@ -560,7 +1238,7 @@ class EditableTitleLabel(QWidget):
         self._hover_overlay = hover_overlay
         text_qss = (
             f"color: {text_color}; background-color: transparent;"
-            f"font-size: 10pt; font-weight: 600;"
+            f"font-size: 10pt; font-weight: 700;"
         )
         self._label.setStyleSheet(f"QLabel {{ {text_qss} }}")
         self._edit.setStyleSheet(
@@ -718,6 +1396,16 @@ class DragHandle(QWidget):
         self.title_widget = EditableTitleLabel(self)
         layout.addWidget(self.title_widget, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        # "1/4" — checklist progress, shown only while the note is collapsed,
+        # so a folded checklist still tells you what's left. Mouse-transparent
+        # so it doesn't eat drags/double-clicks on the bar.
+        self.progress_badge = QLabel(self)
+        self.progress_badge.setObjectName("progressBadge")
+        self.progress_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.progress_badge.hide()
+        layout.addSpacing(4)
+        layout.addWidget(self.progress_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+
         # Drag/collapse grab area — fills all remaining horizontal space.
         # Mouse-transparent so clicks reach DragHandle itself.
         self._drag_area = QWidget(self)
@@ -739,16 +1427,27 @@ class DragHandle(QWidget):
         layout.addWidget(self._drag_area)
 
     def apply_bg(self, color: str):
-        """Paint both surfaces of the drag handle in the title-bar color.
-        Each widget is styled directly (not via a parent-cascade rule),
-        because cascading background-color from a parent stylesheet to a
-        plain QWidget child is unreliable across Qt themes."""
+        """Style both surfaces of the drag handle. Since v4 this is always
+        'transparent': the title bar alone paints the bar colour, because with
+        per-note opacity every extra painted layer would stack its alpha and
+        make the bar look more opaque than the rest of the note. Each widget
+        is still styled directly (not via a parent-cascade rule), because
+        cascading from a parent stylesheet is unreliable across Qt themes."""
         self.setStyleSheet(
             f"QWidget#dragHandle {{ background-color: {color}; }}"
         )
         self._drag_area.setStyleSheet(
             f"QWidget#dragArea {{ background-color: {color}; }}"
         )
+
+    def set_progress(self, done: int, total: int, visible: bool, text_color: str, chip_bg: str):
+        self.progress_badge.setText(f"{done}/{total}")
+        self.progress_badge.setToolTip(f"{done} of {total} done")
+        self.progress_badge.setStyleSheet(
+            f"QLabel#progressBadge {{ color: {text_color}; background-color: {chip_bg};"
+            f" border-radius: 7px; padding: 1px 7px; font-size: 8.5pt; font-weight: 700; }}"
+        )
+        self.progress_badge.setVisible(visible and total > 0)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -778,7 +1477,9 @@ class TitleBar(QWidget):
         self.setFixedHeight(config.TITLE_BAR_HEIGHT)
         # Style state — kept so set_collapsed_style and apply_colors can
         # re-emit the stylesheet without re-passing every parameter.
-        self._title_bg = "#F9E44A"
+        self._title_bg = "#FBE36E"
+        # Paper opacity of the bar (0..1), kept in step with the note body.
+        self._alpha = 1.0
         # Remembered so _refresh_pin_icon can repaint the thumbtack on toggle
         # without waiting for the next apply_colors call.
         self._btn_color = "#1a1a1a"
@@ -836,6 +1537,23 @@ class TitleBar(QWidget):
         self.opts_btn.clicked.connect(self.optionsRequested.emit)
         layout.addWidget(self.opts_btn)
 
+        # Pin and ••• show on hover (StickyNote.set_chrome_state). Keep their
+        # space when hidden so the title doesn't jump as the pointer moves.
+        for btn in (self.pin_btn, self.opts_btn):
+            policy = btn.sizePolicy()
+            policy.setRetainSizeWhenHidden(True)
+            btn.setSizePolicy(policy)
+
+    def set_hover_chrome(self, show_pin: bool, show_opts: bool):
+        self.pin_btn.setVisible(show_pin)
+        self.opts_btn.setVisible(show_opts)
+
+    def set_surface_alpha(self, alpha: float):
+        if abs(alpha - self._alpha) < 0.002:
+            return
+        self._alpha = alpha
+        self._rebuild_bar_style()
+
     def set_pinned(self, pinned: bool):
         """Reflect state in the button WITHOUT re-emitting pinToggled — used
         when restoring a saved note, where the toggle isn't a user action.
@@ -875,7 +1593,7 @@ class TitleBar(QWidget):
         # DragHandle owns the styling for both its own surface and the inner
         # drag-area widget (parent-cascade isn't reliable, so each widget
         # is given its own stylesheet directly).
-        self.drag_handle.apply_bg(title_bg)
+        self.drag_handle.apply_bg("transparent")
         self.drag_handle.title_widget.apply_text_style(btn_color, hover_overlay)
 
     def set_collapsed_style(self, collapsed: bool):
@@ -892,7 +1610,7 @@ class TitleBar(QWidget):
         bottom_radius = r if self._is_collapsed_style else 0
         self.setStyleSheet(f"""
             QWidget#titleBar {{
-                background-color: {self._title_bg};
+                background-color: {rgba(self._title_bg, self._alpha)};
                 border-top-left-radius: {r}px;
                 border-top-right-radius: {r}px;
                 border-bottom-left-radius: {bottom_radius}px;
@@ -921,7 +1639,7 @@ class FormatBar(QWidget):
     checklistClicked = pyqtSignal()
 
     # Defaults — buttons scale around these via apply_size()
-    BTN_MIN, BTN_DEFAULT, BTN_MAX = 24, 30, 44
+    BTN_MIN, BTN_DEFAULT, BTN_MAX = 24, 30, 34
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -955,9 +1673,18 @@ class FormatBar(QWidget):
         self.checklist_btn = self._make_btn("", "checklistBtn",  "",                              "Checklist", "checklist",
                                             hint="click a box to tick it")
 
+        # Thin divider between text styles and list types.
+        self._divider = QFrame(self)
+        self._divider.setObjectName("formatDivider")
+        self._divider.setFixedSize(1, 18)
+
         layout.addStretch()
         for btn in self._buttons():
             layout.addWidget(btn)
+            if btn is self.strike_btn:
+                layout.addSpacing(3)
+                layout.addWidget(self._divider, 0, Qt.AlignmentFlag.AlignVCenter)
+                layout.addSpacing(3)
         layout.addStretch()
 
         self.bold_btn.clicked.connect(self.boldClicked.emit)
@@ -1020,6 +1747,7 @@ class FormatBar(QWidget):
                 border-bottom-left-radius: {r}px;
                 border-bottom-right-radius: {r}px;
             }}
+            QFrame#formatDivider {{ background-color: {rgba(btn_color, 0.25)}; border: none; }}
         """)
         for btn in self._buttons():
             btn.set_font_css(font_css)
@@ -1034,12 +1762,64 @@ class FormatBar(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# NoteFooter — bottom strip of the note body.
+#
+# At rest it shows "Edited 12 min ago"; while you're typing in this note it
+# swaps to the FormatBar. One toolbar on screen (the note you're working in)
+# instead of one on every note.
+# ---------------------------------------------------------------------------
+class NoteFooter(QWidget):
+    def __init__(self, format_bar: "FormatBar", parent=None):
+        super().__init__(parent)
+        self.setObjectName("noteFooter")
+        self._stack = QStackedLayout(self)
+        self._stack.setContentsMargins(0, 0, 0, 0)
+
+        meta = QWidget(self)
+        meta_layout = QHBoxLayout(meta)
+        meta_layout.setContentsMargins(16, 0, 10, 2)
+        meta_layout.setSpacing(6)
+        self._clock = QLabel(meta)
+        self._clock.setFixedSize(14, 14)
+        self._label = QLabel(meta)
+        self._label.setObjectName("editedLabel")
+        meta_layout.addWidget(self._clock, 0, Qt.AlignmentFlag.AlignVCenter)
+        meta_layout.addWidget(self._label, 0, Qt.AlignmentFlag.AlignVCenter)
+        meta_layout.addStretch()
+
+        self._stack.addWidget(meta)
+        self._stack.addWidget(format_bar)
+        self._stack.setCurrentIndex(0)
+
+    def show_toolbar(self, show: bool):
+        self._stack.setCurrentIndex(1 if show else 0)
+
+    def set_edited_text(self, text: str):
+        self._label.setText(text)
+
+    def apply_colors(self, text_color: str):
+        muted = rgba(text_color, 0.62)
+        self._label.setStyleSheet(
+            f"QLabel#editedLabel {{ color: {muted}; background: transparent; font-size: 9pt; }}"
+        )
+        self._clock.setPixmap(utils.line_icon("clock", muted_hex(text_color, 0.62), 14).pixmap(QSize(14, 14)))
+
+
+def muted_hex(text_color: str, alpha: float) -> str:
+    """`text_color` at `alpha`, as #AARRGGBB (what QColor accepts for icons)."""
+    c = QColor(text_color)
+    c.setAlphaF(alpha)
+    return c.name(QColor.NameFormat.HexArgb)
+
+
+# ---------------------------------------------------------------------------
 # StickyNote — main frameless note window
 # ---------------------------------------------------------------------------
 class StickyNote(QWidget):
     noteDeleted = pyqtSignal(str)
-    newNoteRequested = pyqtSignal(str)        # emits theme_name
+    newNoteRequested = pyqtSignal(str, int)   # emits (theme_name, opacity) to copy
     titleChanged = pyqtSignal(str, str)        # emits (note_id, new_title)
+    receiveRequested = pyqtSignal(str)         # emits note_id (placement anchor)
 
     def __init__(
         self,
@@ -1051,6 +1831,8 @@ class StickyNote(QWidget):
         title=None,
         last_edited=None,
         pinned=False,
+        hide_from_dock=False,
+        opacity=config.OPACITY_MAX,
         parent=None,
     ):
         super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
@@ -1063,10 +1845,25 @@ class StickyNote(QWidget):
         self._is_being_deleted = False
         self._theme_name = theme
         self._is_pinned = bool(pinned)
+        self._hide_from_dock = bool(hide_from_dock)
         self._is_collapsed = False
         self._pre_collapse_height = 250
         self._options_panel = None
         self._anim_group = None
+
+        # v4 opacity + hover state. `_opacity` is the saved preference;
+        # `_surface_alpha` is what's painted right now (100% while hovered or
+        # typing, the preference while idle — see _refresh_chrome_state).
+        self._opacity = self._clamp_opacity(opacity)
+        self._hovered = False
+        self._typing = False
+        self._surface_alpha = 1.0
+        self._flashing = False
+        self._theme = utils.get_theme(theme)
+        self._alpha_anim = QVariantAnimation(self)
+        self._alpha_anim.setDuration(config.OPACITY_FADE_MS)
+        self._alpha_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._alpha_anim.valueChanged.connect(lambda v: self._apply_surface(float(v)))
 
         # Title state. A missing `title` (None) marks this note as "still on
         # the smart default" — body edits will keep refreshing the displayed
@@ -1092,6 +1889,13 @@ class StickyNote(QWidget):
         self._save_debounce.setSingleShot(True)
         self._save_debounce.setInterval(config.SAVE_DEBOUNCE_MS)
         self._save_debounce.timeout.connect(self._save)
+
+        # Size lock — see _lock_size. True only while an edge-resize is live.
+        self._size_unlocked = False
+        self._relock_timer = QTimer(self)
+        self._relock_timer.setSingleShot(True)
+        self._relock_timer.setInterval(config.SIZE_RELOCK_DELAY_MS)
+        self._relock_timer.timeout.connect(self._lock_size)
 
         self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
         self._setup_ui()
@@ -1132,12 +1936,7 @@ class StickyNote(QWidget):
             self.restoreGeometry(geometry_data)
             self._initial_position = (self.x(), self.y())
         else:
-            # Default size scales with the user's screen so notes don't look
-            # tiny on 1440p/4K or oversized on small laptops.
-            screen = QApplication.primaryScreen().availableGeometry()
-            default_w = max(280, min(480, screen.width() // 8))
-            default_h = max(280, min(480, screen.height() // 6))
-            self.resize(default_w, default_h)
+            self.resize(*default_note_size())
 
         # Tag the window's WM_NORMAL_HINTS with USPosition so Mutter (and any
         # other X11 WM) honors our requested position on the *initial* window
@@ -1151,6 +1950,22 @@ class StickyNote(QWidget):
         # is set when the WM first maps the window.
         if geometry_data is not None:
             xwm.mark_position_user_requested(self)
+
+        # Lock before first map so the WM never sees a resizable note — with
+        # min == max from the start, no tiling path can catch it in between.
+        self._lock_size()
+
+        # Assert WM states BEFORE the window is first mapped. Mutter honours
+        # whatever _NET_WM_STATE is present at map time, so doing it here means
+        # a pinned note is never briefly un-pinned and a dock-hidden note never
+        # flashes into the dock before disappearing. showEvent re-asserts these
+        # afterwards, because Mutter clears the property again on every unmap.
+        xwm.set_initial_wm_states(
+            self, above=self._is_pinned, skip_taskbar=self._hide_from_dock
+        )
+        # Notes are never maximizable or edge-tileable — see disable_maximize.
+        # changeEvent is the fallback for WMs that ignore the hint.
+        xwm.disable_maximize(self)
 
         # Install event filter on children after UI is built
         for child in self.findChildren(QWidget):
@@ -1173,8 +1988,17 @@ class StickyNote(QWidget):
         self._refresh_title_display()
 
         # Only now connect body-edit tracking — keeps the initial setHtml
-        # from being treated as a user edit.
+        # from being treated as a user edit. The modified flag is the second
+        # guard (see _on_body_changed): anything that happens before the user
+        # actually types — loading, the highlighter's first pass — leaves it
+        # clear, so opening a note never changes its last_edited time.
+        self.text_edit.document().setModified(False)
         self.text_edit.textChanged.connect(self._on_body_changed)
+
+        # Start idle: the saved opacity, footer showing "Edited …".
+        self._apply_surface(self._opacity / 100.0, force=True)
+        self._refresh_chrome_state()
+        self._refresh_progress()
 
         # Restore the pin button's visual state. The X11 state itself can't be
         # applied yet — _NET_WM_STATE requires a mapped window, so that happens
@@ -1197,6 +2021,37 @@ class StickyNote(QWidget):
         super().showEvent(event)
         if self._is_pinned:
             QTimer.singleShot(0, lambda: xwm.set_always_on_top(self, True))
+        if self._hide_from_dock:
+            QTimer.singleShot(0, lambda: xwm.set_skip_taskbar(self, True))
+
+    def changeEvent(self, event):
+        """Undo any maximize/fullscreen the WM applies despite disable_maximize.
+
+        A maximized note is broken, not just oversized: the WM ignores our
+        size requests, so collapse leaves the title bar centered in a
+        transparent full-screen window that swallows clicks to everything
+        behind it. Covers WMs that ignore Motif hints, and notes whose saved
+        geometry carries the maximized flag from before this fix (restore-
+        Geometry re-applies it pre-show, and this clears it).
+
+        Deferred so the state change finishes before we revert it. Only the
+        maximize/fullscreen bits are cleared — a minimized note stays minimized.
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            bad = Qt.WindowState.WindowMaximized | Qt.WindowState.WindowFullScreen
+            if self.windowState() & bad:
+                QTimer.singleShot(
+                    0, lambda: self.setWindowState(self.windowState() & ~bad)
+                )
+
+    def set_hidden_from_dock(self, hidden: bool):
+        """Apply the app-global dock preference to this note. Called by
+        TrayManager for every open note when the Settings toggle changes —
+        the dock lists an app as running if ANY of its windows is visible, so
+        this only has an effect when every note agrees."""
+        self._hide_from_dock = bool(hidden)
+        xwm.set_skip_taskbar(self, self._hide_from_dock)
 
     def _on_pin_toggled(self, pinned: bool):
         """User clicked the pin. The window is mapped here by definition, so
@@ -1239,13 +2094,24 @@ class StickyNote(QWidget):
         self.title_bar = TitleBar(self.bg_widget)
         self.title_bar.pinToggled.connect(self._on_pin_toggled)
         self.title_bar.newNoteRequested.connect(
-            lambda: self.newNoteRequested.emit(self._theme_name)
+            lambda: self.newNoteRequested.emit(self._theme_name, self._opacity)
         )
         self.title_bar.optionsRequested.connect(self._show_options_panel)
         self.title_bar.titleCommitted.connect(self._on_title_committed)
         bg_layout.addWidget(self.title_bar)
 
-        self.text_edit = NoteTextEdit(self.bg_widget)
+        # The paper below the title bar. bg_widget itself paints nothing: the
+        # title bar and this body each paint their own colour, so with a
+        # see-through note no area is covered by two translucent layers.
+        self.body_widget = QWidget(self.bg_widget)
+        self.body_widget.setObjectName("noteBody")
+        self.body_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        body_layout = QVBoxLayout(self.body_widget)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        bg_layout.addWidget(self.body_widget)
+
+        self.text_edit = NoteTextEdit(self.body_widget)
         self.text_edit.setFrameShape(QTextEdit.Shape.NoFrame)
         self.text_edit.setAcceptRichText(True)
         self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -1253,16 +2119,28 @@ class StickyNote(QWidget):
         # Tighter list indentation than Qt's 40px default — sticky notes are
         # narrow, and the deep default eats real estate at every sublist level.
         self.text_edit.document().setIndentWidth(config.LIST_INDENT_PX)
-        bg_layout.addWidget(self.text_edit)
+        body_layout.addWidget(self.text_edit)
+        # Display-only styling of ticked items (see ChecklistHighlighter).
+        self._highlighter = ChecklistHighlighter(self.text_edit.document())
+        self.text_edit.highlighter = self._highlighter
 
-        self.format_bar = FormatBar(self.bg_widget)
+        self.format_bar = FormatBar(self.body_widget)
         self.format_bar.boldClicked.connect(self._toggle_bold)
         self.format_bar.italicClicked.connect(self._toggle_italic)
         self.format_bar.underlineClicked.connect(self._toggle_underline)
         self.format_bar.strikeClicked.connect(self._toggle_strike)
         self.format_bar.bulletClicked.connect(self._toggle_bullet_list)
         self.format_bar.checklistClicked.connect(self._toggle_checklist)
-        bg_layout.addWidget(self.format_bar)
+        self.footer = NoteFooter(self.format_bar, self.body_widget)
+        # Exactly the toolbar's height: all spare room belongs to the text.
+        self.footer.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.footer.setFixedHeight(self.format_bar.height())
+        body_layout.addWidget(self.footer)
+
+        self._edited_timer = QTimer(self)
+        self._edited_timer.setInterval(config.EDITED_LABEL_REFRESH_MS)
+        self._edited_timer.timeout.connect(self._refresh_edited_label)
+        self._edited_timer.start()
 
         # Reflect cursor's current formatting in the toolbar's checked state.
         self.text_edit.cursorPositionChanged.connect(self._refresh_format_bar)
@@ -1313,7 +2191,7 @@ class StickyNote(QWidget):
         new_sc = QShortcut(QKeySequence(config.SHORTCUTS["new_note"]), self)
         new_sc.setContext(Qt.ShortcutContext.WindowShortcut)
         new_sc.activated.connect(
-            lambda: self.newNoteRequested.emit(self._theme_name)
+            lambda: self.newNoteRequested.emit(self._theme_name, self._opacity)
         )
 
     def _setup_autosave(self):
@@ -1327,36 +2205,190 @@ class StickyNote(QWidget):
     # ------------------------------------------------------------------
 
     def _apply_theme(self, theme: dict):
-        bg = theme["bg"]
+        self._theme = theme
         title_bg = theme["title"]
         text_color = theme["text"]
 
         # Dark themes (charcoal) use light text — title-bar buttons need a
         # light tint and a light hover overlay to be visible.
-        is_dark = text_color == "#f0f0f0"
-        btn_color = "#cccccc" if is_dark else "#555555"
-        hover_overlay = "rgba(255, 255, 255, 0.18)" if is_dark else "rgba(0, 0, 0, 0.12)"
+        is_dark = bool(theme.get("dark", QColor(text_color).lightness() > 160))
+        btn_color = "#D6D6D6" if is_dark else "#4A4A4A"
+        self._btn_color = btn_color
+        hover_overlay = "rgba(255, 255, 255, 0.18)" if is_dark else "rgba(0, 0, 0, 0.10)"
+        # Scrollbar thumb: a translucent tint rather than a fixed color, so it
+        # reads as a deeper shade of whatever note color sits behind it.
+        if is_dark:
+            thumb, thumb_hover, thumb_pressed = (
+                "rgba(255, 255, 255, 0.22)", "rgba(255, 255, 255, 0.35)",
+                "rgba(255, 255, 255, 0.45)",
+            )
+        else:
+            thumb, thumb_hover, thumb_pressed = (
+                "rgba(0, 0, 0, 0.18)", "rgba(0, 0, 0, 0.30)",
+                "rgba(0, 0, 0, 0.40)",
+            )
 
-        self.bg_widget.setStyleSheet(f"""
-            QWidget#noteBackground {{
-                background-color: {bg};
-                border-radius: {config.CORNER_RADIUS_PX}px;
-            }}
-        """)
+        # bg_widget paints nothing itself (see _setup_ui); the bar and body do.
+        self.bg_widget.setStyleSheet("QWidget#noteBackground { background: transparent; }")
         self.title_bar.apply_colors(title_bg, btn_color, hover_overlay, is_dark)
-        self.format_bar.apply_colors(title_bg, btn_color, is_dark)
+        # The format bar sits on the paper now, not on a separate coloured band.
+        self.format_bar.apply_colors("transparent", btn_color, is_dark)
+        self.footer.apply_colors(text_color)
+        self._highlighter.set_ink(text_color)
+        self._highlighter.rehighlight()
         self.text_edit.setStyleSheet(f"""
             NoteTextEdit {{
                 background-color: transparent;
                 color: {text_color};
                 border: none;
-                padding: 8px;
+                padding: 6px 8px 2px 8px;
+            }}
+            /* Overlay-style scrollbar: transparent track, no arrow buttons,
+               thin rounded thumb. The 4px right margin keeps the thumb out
+               of the resize band at the note's right edge
+               (RESIZE_ZONE - SHADOW_GUTTER), so grabbing it never resizes. */
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 12px;
+                margin: 4px 4px 4px 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {thumb};
+                border-radius: 3px;
+                min-height: 28px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {thumb_hover};
+            }}
+            QScrollBar::handle:vertical:pressed {{
+                background: {thumb_pressed};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+                border: none;
+                background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
             }}
         """)
+        # Same font as every earlier version — it's part of what toHtml()
+        # writes, so keeping it means v4 saves notes byte-for-byte as before.
         font = QFont()
         font.setFamilies(["Segoe UI", "Ubuntu", "Sans Serif"])
         font.setPointSize(config.FONT_SIZE)
         self.text_edit.setFont(font)
+        self._apply_surface(self._surface_alpha, force=True)
+        self._refresh_progress()
+
+    # ------------------------------------------------------------------
+    # Opacity, hover chrome, and the idle/typing footer
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _clamp_opacity(value) -> int:
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return config.OPACITY_MAX
+        step = config.OPACITY_STEP
+        value = int(round(value / step) * step)
+        return max(config.OPACITY_MIN, min(config.OPACITY_MAX, value))
+
+    def _apply_surface(self, alpha: float, force: bool = False):
+        """Paint the paper at `alpha` (0..1): body, title bar, the checkbox
+        eraser, and a drop shadow that thins out as the paper does (a strong
+        shadow would show through a see-through note as a grey smudge)."""
+        if not force and abs(alpha - self._surface_alpha) < 0.002:
+            return
+        self._surface_alpha = alpha
+        theme = self._theme
+        r = config.CORNER_RADIUS_PX
+        self.body_widget.setStyleSheet(f"""
+            QWidget#noteBody {{
+                background-color: {rgba(theme['bg'], alpha)};
+                border-bottom-left-radius: {r}px;
+                border-bottom-right-radius: {r}px;
+            }}
+        """)
+        self.title_bar.set_surface_alpha(alpha)
+        surface = QColor(theme["bg"])
+        surface.setAlphaF(alpha)
+        self.text_edit.set_paint_colors(surface, QColor(theme["text"]))
+        if not self._flashing:
+            self._apply_shadow()
+
+    def _apply_shadow(self):
+        profile = config.SHADOW_BODY_COLLAPSED if self._is_collapsed else config.SHADOW_BODY_EXPANDED
+        blur, offset_y, alpha = profile
+        k = self._surface_alpha ** 3      # 1.0 solid -> ~0.34 at 70% -> ~0.13 at 50%
+        self._bg_shadow.setBlurRadius(blur)
+        self._bg_shadow.setOffset(0, offset_y)
+        self._bg_shadow.setColor(QColor(0, 0, 0, int(alpha * k)))
+
+    def _refresh_chrome_state(self):
+        """Recompute what the pointer/keyboard state means for this note:
+        which title-bar chips show, footer vs toolbar, and painted opacity."""
+        panel_open = self._options_panel is not None
+        self.title_bar.set_hover_chrome(
+            show_pin=self._hovered or self._is_pinned or panel_open,
+            show_opts=self._hovered or panel_open,
+        )
+        self.footer.show_toolbar(self._typing)
+        if not self._typing:
+            self._refresh_edited_label()
+        # While the ••• menu is open the note previews its idle look, so the
+        # opacity slider shows its effect live.
+        solid = (self._hovered or self._typing) and not panel_open
+        target = 1.0 if solid else self._opacity / 100.0
+        if abs(target - self._surface_alpha) < 0.002:
+            return
+        self._alpha_anim.stop()
+        self._alpha_anim.setStartValue(self._surface_alpha)
+        self._alpha_anim.setEndValue(target)
+        self._alpha_anim.start()
+
+    def _refresh_edited_label(self):
+        self.footer.set_edited_text(edited_phrase(self._last_edited))
+
+    def _refresh_progress(self):
+        done, total = checklist_progress(self.text_edit.document())
+        chip = "rgba(255, 255, 255, 0.14)" if self._theme.get("dark") else "rgba(255, 255, 255, 0.55)"
+        self.title_bar.drag_handle.set_progress(
+            done, total, self._is_collapsed, self._btn_color, chip
+        )
+
+    def enterEvent(self, event):   # noqa: N802
+        super().enterEvent(event)
+        self._hovered = True
+        self._refresh_chrome_state()
+
+    def leaveEvent(self, event):   # noqa: N802
+        super().leaveEvent(event)
+        self._hovered = False
+        self._refresh_chrome_state()
+
+    def _set_opacity(self, value: int):
+        value = self._clamp_opacity(value)
+        if value == self._opacity:
+            return
+        self._opacity = value
+        self._refresh_chrome_state()
+        if hasattr(self, "_save_debounce") and not self._is_being_deleted:
+            self._save_debounce.start()
+
+    def flash(self):
+        """Brief white glow so a note picked from All notes / the tray menu is
+        easy to spot among overlapping notes."""
+        self._flashing = True
+        self._bg_shadow.setColor(QColor(255, 255, 255, 235))
+        self._bg_shadow.setBlurRadius(30)
+        self._bg_shadow.setOffset(0, 0)
+
+        def _done():
+            self._flashing = False
+            self._apply_shadow()
+        QTimer.singleShot(config.FLASH_MS, _done)
 
     # ------------------------------------------------------------------
     # Options panel
@@ -1372,19 +2404,28 @@ class StickyNote(QWidget):
         # falls back to a parentless toplevel (which can't be positioned on
         # Wayland) or lands at the compositor's default spot instead of the
         # "..." button.
-        panel = OptionsPanel(self._theme_name, parent=self)
+        panel = OptionsPanel(
+            theme=self._theme_name,
+            opacity=self._opacity,
+            pinned=self._is_pinned,
+            pin_available=self.title_bar.pin_btn.isEnabled(),
+            collapsed=self._is_collapsed,
+            parent=self,
+        )
         panel.themeSelected.connect(self._change_theme)
+        panel.opacityChanged.connect(self._set_opacity)
+        panel.pinToggleRequested.connect(self.title_bar.pin_btn.toggle)
+        panel.collapseToggleRequested.connect(self.toggle_collapse)
         panel.deleteRequested.connect(self._handle_delete)
+        panel.shareRequested.connect(self._share)
+        panel.receiveRequested.connect(self._request_receive)
         panel.dismissed.connect(self._on_panel_dismissed)
 
-        # Position: below and right-aligned to the "..." button
-        btn = self.title_bar.opts_btn
-        btn_bottom_left = btn.mapToGlobal(QPoint(0, btn.height()))
-        panel.adjustSize()
-        x = btn_bottom_left.x() + btn.width() - panel.width()
-        panel.move(QPoint(x, btn_bottom_left.y()))
-        panel.show()
+        # Beside the note, not over it — so the opacity preview is visible.
+        panel.place_beside(self)
         self._options_panel = panel
+        panel.show()
+        self._refresh_chrome_state()
 
     def _close_options_panel(self):
         """Close the panel if open, clearing the reference synchronously so a
@@ -1400,12 +2441,37 @@ class StickyNote(QWidget):
         # new reference).
         if self._options_panel is panel:
             self._options_panel = None
+            # The popup grabbed the pointer, so no Enter event arrives if the
+            # pointer is already back over the note — ask where it is.
+            self._hovered = self.geometry().contains(QCursor.pos())
+            self._refresh_chrome_state()
 
     def _change_theme(self, theme_name: str):
         self._theme_name = theme_name
         self._apply_theme(utils.get_theme(theme_name))
         self._close_options_panel()
         self._save()
+
+    # ------------------------------------------------------------------
+    # Share / Receive (format and safety rules live in sharing.py)
+    # ------------------------------------------------------------------
+
+    def _share(self):
+        """Put this note on the clipboard as shareable text."""
+        QApplication.clipboard().setText(sharing.encode_note(
+            title=self._title,
+            title_is_auto=self._title_is_default,
+            theme=self._theme_name,
+            body_html=self.text_edit.toHtml(),
+        ))
+        if self._options_panel is not None:
+            self._options_panel.show_share_copied()
+
+    def _request_receive(self):
+        """Receive makes a new note, which only TrayManager can do — hand it
+        off, naming this note so the new one opens beside it."""
+        self._close_options_panel()
+        self.receiveRequested.emit(self.note_id)
 
     # ------------------------------------------------------------------
     # Delete
@@ -1426,21 +2492,15 @@ class StickyNote(QWidget):
 
     def _apply_expanded_shadow(self):
         """Roomy soft shadow for the full note. Profile sourced from
-        config.SHADOW_BODY_EXPANDED."""
-        blur, offset_y, alpha = config.SHADOW_BODY_EXPANDED
-        self._bg_shadow.setBlurRadius(blur)
-        self._bg_shadow.setOffset(0, offset_y)
-        self._bg_shadow.setColor(QColor(0, 0, 0, alpha))
+        config.SHADOW_BODY_EXPANDED, thinned for a see-through note."""
+        self._apply_shadow()
 
     def _apply_collapsed_shadow(self):
         """Tighter, denser shadow used while collapsed. The body's gone so
         the shadow has to sell the 'floating pill' feel on its own — and
         a tighter blur stays within SHADOW_GUTTER instead of being clipped
         at the (now small) window edge."""
-        blur, offset_y, alpha = config.SHADOW_BODY_COLLAPSED
-        self._bg_shadow.setBlurRadius(blur)
-        self._bg_shadow.setOffset(0, offset_y)
-        self._bg_shadow.setColor(QColor(0, 0, 0, alpha))
+        self._apply_shadow()
 
     def toggle_collapse(self):
         if self._is_collapsed:
@@ -1459,15 +2519,17 @@ class StickyNote(QWidget):
         # rounded edge, not a hard cut.
         self.title_bar.set_collapsed_style(True)
         self._apply_collapsed_shadow()
-
-        # Allow window to shrink below its normal minimum
-        self.setMinimumHeight(0)
+        self._refresh_progress()
 
         # Window must accommodate the title bar plus the top/bottom
         # shadow gutters; otherwise the gutters consume all the height
         # and the title bar is clipped.
         collapsed_h = config.TITLE_BAR_HEIGHT + 2 * config.SHADOW_GUTTER
 
+        # Animating min and max together keeps the size locked on every frame
+        # (min == max), so the WM never sees a resizable note mid-animation.
+        # Minimum is animated first, so on the way down it never exceeds max.
+        self._lock_size()
         group = QParallelAnimationGroup(self)
         for prop in (b"minimumHeight", b"maximumHeight"):
             anim = QPropertyAnimation(self, prop)
@@ -1478,8 +2540,8 @@ class StickyNote(QWidget):
             group.addAnimation(anim)
 
         def _hide_body():
-            self.text_edit.hide()
-            self.format_bar.hide()
+            self.body_widget.hide()
+            self._lock_size()
         group.finished.connect(_hide_body)
         group.start()
         self._anim_group = group    # prevent GC
@@ -1494,9 +2556,12 @@ class StickyNote(QWidget):
         self.title_bar.set_collapsed_style(False)
         self._apply_expanded_shadow()
 
-        self.text_edit.show()
-        self.format_bar.show()
+        self.body_widget.show()
+        self._refresh_progress()
 
+        # Same lock-on-every-frame animation as _collapse. On the way up min
+        # briefly leads max within a frame; Qt sizes to min, as it always has.
+        self._lock_size()
         group = QParallelAnimationGroup(self)
         for prop in (b"minimumHeight", b"maximumHeight"):
             anim = QPropertyAnimation(self, prop)
@@ -1506,11 +2571,7 @@ class StickyNote(QWidget):
             anim.setEndValue(target_h)
             group.addAnimation(anim)
 
-        def _restore_constraints():
-            self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
-            self.setMaximumSize(16_777_215, 16_777_215)
-
-        group.finished.connect(_restore_constraints)
+        group.finished.connect(self._lock_size)
         group.start()
         self._anim_group = group
 
@@ -1521,11 +2582,9 @@ class StickyNote(QWidget):
         self.title_bar.set_title_editable(False)
         self.title_bar.set_collapsed_style(True)
         self._apply_collapsed_shadow()
-        self.text_edit.hide()
-        self.format_bar.hide()
-        self.setMinimumHeight(0)
-        self.setMaximumHeight(collapsed_h)
-        self.resize(self.width(), collapsed_h)
+        self.body_widget.hide()
+        self._refresh_progress()
+        self._lock_size(height=collapsed_h)
 
     # ------------------------------------------------------------------
     # Bullet list toggle
@@ -1624,6 +2683,7 @@ class StickyNote(QWidget):
             self._remove_list(cursor)
         else:
             cursor.createList(self._new_list_format())
+        self._highlighter.rehighlight()
         self._refresh_format_bar()
 
     def _toggle_checklist(self):
@@ -1639,6 +2699,7 @@ class StickyNote(QWidget):
         else:
             cursor.createList(self._new_list_format())
             self._set_markers(self.text_edit.textCursor(), _MARKER_UNCHECKED)
+        self._highlighter.rehighlight()
         self._refresh_format_bar()
 
     def _refresh_format_bar(self):
@@ -1665,7 +2726,17 @@ class StickyNote(QWidget):
         """Body content changed via user input. Updates last_edited and,
         while the title is still on the smart default, re-derives the
         displayed title from the first body line."""
+        doc = self.text_edit.document()
+        # Re-highlighting (ChecklistHighlighter) and loading also emit
+        # textChanged without changing anything the user wrote; only a real
+        # edit marks the document modified. Without this, merely opening a
+        # note (or recolouring it) would bump its last_edited time.
+        if not doc.isModified():
+            return
+        doc.setModified(False)
         self._last_edited = _now_iso()
+        self._refresh_edited_label()
+        self._refresh_progress()
         if self._title_is_default:
             new_title = derive_title_from_text(self.text_edit.toPlainText())
             if new_title != self._title:
@@ -1721,13 +2792,42 @@ class StickyNote(QWidget):
     # ------------------------------------------------------------------
 
     def _get_resize_zone(self, local: QPoint) -> int:
+        """Which resize zone (if any) `local` falls in, in window coords.
+
+        The window is SHADOW_GUTTER px larger than the visible note on every
+        side — a transparent margin that exists purely to give the drop shadow
+        room to render. That margin still receives mouse events, so mapping the
+        resize band across it made every note grab clicks up to 12px outside
+        its visible edge, in what looks like bare desktop: a click target ~19%
+        larger than the note appears. That was issue #24 — users aiming at
+        something *next to* a note would silently start resizing it.
+
+        So the band is now clamped to the visible note. Its width inside the
+        note is unchanged, which is deliberate: the visible portion is the part
+        that already worked, and widening it inward would collide with the + and
+        ••• buttons (which start just 4px inside the edge) and with the
+        checklist marker gutter.
+        """
         x, y = local.x(), local.y()
-        w, h = self.width(), self.height()
+        g = config.SHADOW_GUTTER
+        vis_left, vis_top = g, g
+        vis_right, vis_bottom = self.width() - g, self.height() - g
+
+        # Outside the visible note: shadow only. Never a resize zone.
+        if not (vis_left <= x < vis_right and vis_top <= y < vis_bottom):
+            return _NONE
+
+        # Band width inside the note, and the original strict/non-strict
+        # comparisons preserved exactly. The near edges used `<` and the far
+        # edges `>`, which makes the far bands 1px narrower — keeping that
+        # asymmetry matters: widening the bottom band by even 1px puts it under
+        # the last row of the format-bar buttons.
         z = config.RESIZE_ZONE
-        left   = x < z
-        right  = x > w - z
-        top    = y < z
-        bottom = y > h - z
+        band = z - g
+        left   = x < vis_left + band
+        right  = x > vis_right - band
+        top    = y < vis_top + band
+        bottom = y > vis_bottom - band
         if top    and left:  return _NW
         if top    and right: return _NE
         if bottom and left:  return _SW
@@ -1738,6 +2838,52 @@ class StickyNote(QWidget):
         if right:  return _E
         return _NONE
 
+    # ---- Size lock: notes are fixed-size windows except during an edge drag
+
+    def _lock_size(self, width=None, height=None):
+        """Pin minimum == maximum == the note's size (optionally a new one).
+
+        Why: a window the WM considers resizable can be tiled or maximized,
+        and a tiled note breaks — the WM owns its height, so collapse leaves
+        the title bar stranded mid-screen. disable_maximize only stops GNOME's
+        own maximize/edge-tiling; Ubuntu's Tiling Assistant ignores that and
+        tiles anything that "allows resize". Mutter derives that from
+        WM_NORMAL_HINTS alone (it ignores the Motif resize flag), and a window
+        whose min equals its max is fixed-size: no resize, maximize, fullscreen
+        or tiling from any source, with nothing for the note to snap back from.
+
+        The app still sizes itself freely — collapse/expand and restored
+        geometry go through here with the new size. Only the user's edge drag
+        needs the lock lifted; see _unlock_size_for_resize.
+        """
+        self._relock_timer.stop()
+        self._size_unlocked = False
+        w = self.width() if width is None else width
+        h = self.height() if height is None else height
+        self.setFixedSize(w, h)
+        # Qt buffers the new WM_NORMAL_HINTS until its next flush, which was
+        # measured at up to ~1 s on an idle app; until it lands the WM still
+        # treats the note as resizable. sync() pushes it out now (~2 ms).
+        QApplication.sync()
+
+    def _unlock_size_for_resize(self):
+        """Lift the lock so the WM accepts the edge drag about to start.
+
+        Re-locked by _relock_timer once resize events go quiet (resizeEvent
+        keeps restarting it), or straight away when a title-bar drag starts —
+        the WM's resize grab never tells us it ended, so this is the closest
+        signal there is. A collapsed note keeps its height fixed; only its
+        width was ever adjustable.
+        """
+        if self._is_collapsed:
+            self.setMinimumSize(config.MIN_NOTE_WIDTH, self.height())
+            self.setMaximumSize(16_777_215, self.height())
+        else:
+            self.setMinimumSize(config.MIN_NOTE_WIDTH, config.MIN_NOTE_HEIGHT)
+            self.setMaximumSize(16_777_215, 16_777_215)
+        self._size_unlocked = True
+        self._relock_timer.start()
+
     # ---- Mouse dispatch helpers (used by both eventFilter and self overrides)
 
     def _try_start_resize(self, gpos: QPoint) -> bool:
@@ -1745,6 +2891,7 @@ class StickyNote(QWidget):
         zone = self._get_resize_zone(self.mapFromGlobal(gpos))
         if zone == _NONE:
             return False
+        self._unlock_size_for_resize()
         # Native WM resize is the most reliable on Linux — it handles
         # the geometry math correctly for all four edges (the manual
         # fallback gets the top-edge case wrong on some compositors).
@@ -1763,6 +2910,10 @@ class StickyNote(QWidget):
         """If pressed on a DragHandle, start a drag and return True."""
         if not isinstance(obj, DragHandle):
             return False
+        # A drag is how the note reaches a screen edge, so it must never start
+        # unlocked — even if a resize finished a moment ago.
+        if self._size_unlocked:
+            self._lock_size()
         wh = self.windowHandle()
         if wh is not None and wh.startSystemMove():
             return True
@@ -1792,6 +2943,8 @@ class StickyNote(QWidget):
             self._is_resizing = False
             self._resize_zone = _NONE
             self.unsetCursor()
+            # The manual fallback does see the release, so lock right away.
+            self._lock_size()
             return True
         if self._is_dragging:
             self._is_dragging = False
@@ -1800,6 +2953,14 @@ class StickyNote(QWidget):
 
     def eventFilter(self, obj, event):
         t = event.type()
+        if obj is self.text_edit and t in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
+            # The ••• popup steals focus while open; don't flick the toolbar
+            # away and back for that.
+            if event.reason() != Qt.FocusReason.PopupFocusReason:
+                typing = t == QEvent.Type.FocusIn
+                if typing != self._typing:
+                    self._typing = typing
+                    self._refresh_chrome_state()
         if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
             gpos = event.globalPosition().toPoint()
             if self._try_start_resize(gpos):
@@ -1850,9 +3011,13 @@ class StickyNote(QWidget):
         super().resizeEvent(event)
         # Scale format-bar buttons proportionally to note width
         if hasattr(self, "format_bar"):
-            # 30px buttons at ~280px window; clamped by FormatBar to [24, 44]
-            btn = int(self.width() / 9.5)
+            # 30px buttons at ~320px window; clamped by FormatBar to [24, 34]
+            btn = int(self.width() / 10.5)
             self.format_bar.apply_size(btn)
+            self.footer.setFixedHeight(self.format_bar.height())
+        # Still edge-resizing: push the re-lock back until the drag goes quiet.
+        if getattr(self, "_size_unlocked", False):
+            self._relock_timer.start()
         # Save size after the user finishes resizing
         if hasattr(self, "_save_debounce") and not self._is_being_deleted:
             self._save_debounce.start()
@@ -1888,6 +3053,21 @@ class StickyNote(QWidget):
     def last_edited(self) -> str:
         return self._last_edited
 
+    @property
+    def theme_name(self) -> str:
+        return self._theme_name
+
+    @property
+    def opacity(self) -> int:
+        return self._opacity
+
+    @property
+    def is_pinned(self) -> bool:
+        return self._is_pinned
+
+    def plain_text(self) -> str:
+        return self.text_edit.toPlainText()
+
     def _save(self):
         if self._is_being_deleted:
             return
@@ -1903,254 +3083,12 @@ class StickyNote(QWidget):
         settings.setValue(f"{self.note_id}/title",       self._title)
         settings.setValue(f"{self.note_id}/last_edited", self._last_edited)
         settings.setValue(f"{self.note_id}/pinned",      self._is_pinned)
+        # v4. Additive: earlier versions never read it, and a note without it
+        # (anything saved before v4) loads fully opaque.
+        settings.setValue(f"{self.note_id}/opacity",     self._opacity)
         settings.endGroup()
 
     def closeEvent(self, event):
         if not self._is_being_deleted:
             self._save()
         super().closeEvent(event)
-
-
-# ---------------------------------------------------------------------------
-# AboutDialog — app metadata + useful links (opened from the tray menu).
-#
-# Deliberately brief. Version is pulled from stickynotes.__version__ so it
-# never drifts from the actual package. Links open in the user's default
-# browser / mail client via QDesktopServices.
-# ---------------------------------------------------------------------------
-class AboutDialog(QDialog):
-    _SOURCE_URL = "https://github.com/dstushar7/sticky-notes"
-    _ISSUES_URL = "https://github.com/dstushar7/sticky-notes/issues"
-    _DONATE_URL = "https://www.patreon.com/dstushar7/posts/sticky-note-164511062"
-    _CONTACT_EMAIL = "contact@dabobrotosarkar.com"
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("About Sticky Notes")
-        self.setModal(False)
-        self.setFixedWidth(440)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 22, 24, 18)
-        layout.setSpacing(10)
-
-        # Header: icon + name + version side by side
-        header = QHBoxLayout()
-        header.setSpacing(14)
-
-        icon_label = QLabel()
-        icon_label.setPixmap(utils.create_tray_icon().pixmap(QSize(48, 48)))
-        header.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignTop)
-
-        name_block = QVBoxLayout()
-        name_block.setSpacing(2)
-        name = QLabel("Sticky Notes")
-        name.setStyleSheet("font-size: 16pt; font-weight: 600;")
-        version = QLabel(f"Version {__version__}")
-        version.setStyleSheet("color: #888; font-size: 10pt;")
-        name_block.addWidget(name)
-        name_block.addWidget(version)
-        name_block.addStretch()
-        header.addLayout(name_block)
-        header.addStretch()
-        layout.addLayout(header)
-
-        # Tagline — pulled from the Snap Store summary
-        tagline = QLabel(
-            "The lightest, prettiest sticky notes app on Linux."
-        )
-        tagline.setWordWrap(True)
-        tagline.setStyleSheet("font-size: 10pt;")
-        layout.addWidget(tagline)
-
-        # Author + license one-liner
-        meta = QLabel("© 2026 Dabobroto Sarkar  ·  MIT licensed")
-        meta.setStyleSheet("color: #888; font-size: 9pt;")
-        layout.addWidget(meta)
-
-        layout.addSpacing(4)
-
-        # Link buttons — each opens the URL in the user's default browser.
-        # PointingHandCursor signals they're clickable like normal hyperlinks.
-        # Donate sits last and carries the only bit of colour in the row, so
-        # it reads as the one call to action among otherwise neutral links.
-        link_row = QHBoxLayout()
-        link_row.setSpacing(8)
-        for label, url, accent in (
-            ("Source", self._SOURCE_URL, False),
-            ("Report a bug", self._ISSUES_URL, False),
-            ("Donate", self._DONATE_URL, True),
-        ):
-            btn = QPushButton(label)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            if accent:
-                btn.setStyleSheet("color: #d1495b; font-weight: 600;")
-                btn.setToolTip("Support development on Patreon")
-            btn.clicked.connect(
-                lambda _checked=False, u=url: QDesktopServices.openUrl(QUrl(u))
-            )
-            link_row.addWidget(btn)
-        link_row.addStretch()
-        layout.addLayout(link_row)
-
-        layout.addSpacing(4)
-
-        # Footer: tech credit + clickable mailto. Rich-text QLabel handles
-        # the mailto: link via setOpenExternalLinks.
-        footer = QLabel(
-            "Built with Python and PyQt6  ·  "
-            f'<a href="mailto:{self._CONTACT_EMAIL}" '
-            f'style="color:#888;">{self._CONTACT_EMAIL}</a>'
-        )
-        footer.setTextFormat(Qt.TextFormat.RichText)
-        footer.setOpenExternalLinks(True)
-        footer.setStyleSheet("color: #888; font-size: 9pt;")
-        layout.addWidget(footer)
-
-        # Close button — bottom-right, conventional dialog placement
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        close_btn = QPushButton("Close")
-        close_btn.setDefault(True)
-        close_btn.clicked.connect(self.accept)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-
-
-# ---------------------------------------------------------------------------
-# ShortcutsDialog — the app's only permanent record of how to drive it.
-#
-# Exists because nothing else in the running app documents this. The welcome
-# note covers some of it but only appears on first launch and invites its own
-# deletion, so every existing install has no reference at all. Pull-based on
-# purpose: opened from the tray, never shown unprompted.
-#
-# Content comes from config.SHORTCUT_REFERENCE so the bound keys listed here are
-# literally the same strings passed to QShortcut.
-# ---------------------------------------------------------------------------
-class ShortcutsDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Keyboard Shortcuts")
-        self.setModal(False)
-        self.setFixedWidth(430)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 18)
-        layout.setSpacing(4)
-
-        # Dialogs follow the system palette, not a note theme, so the keycap
-        # chips have to be chosen against whatever the desktop is running.
-        window_bg = self.palette().color(QPalette.ColorRole.Window)
-        keycap = (
-            config.KEYCAP_DARK if window_bg.lightness() < 128
-            else config.KEYCAP_LIGHT
-        )
-        keycap_css = f"""
-            font-family: monospace;
-            font-size: 9pt;
-            background-color: {keycap['bg']};
-            color: {keycap['text']};
-            border: 1px solid {keycap['border']};
-            border-radius: 4px;
-            padding: 2px 6px;
-        """
-
-        for index, (section, rows) in enumerate(config.SHORTCUT_REFERENCE):
-            if index:
-                layout.addSpacing(14)
-            heading = QLabel(section)
-            heading.setStyleSheet(
-                "font-size: 11pt; font-weight: 600; color: #888;"
-            )
-            layout.addWidget(heading)
-            layout.addSpacing(2)
-
-            # One grid per section keeps each section's key column sized to its
-            # own content — a single shared grid would stretch every key cell to
-            # fit "Drag any edge or corner".
-            grid = QGridLayout()
-            grid.setHorizontalSpacing(14)
-            grid.setVerticalSpacing(6)
-            grid.setColumnStretch(1, 1)
-            for row, (keys, what) in enumerate(rows):
-                key_label = QLabel(keys)
-                key_label.setStyleSheet(keycap_css)
-                # Keep the keycap tight to its text instead of filling the cell.
-                key_label.setSizePolicy(
-                    QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
-                )
-                desc = QLabel(what)
-                desc.setWordWrap(True)
-                desc.setStyleSheet("font-size: 10pt;")
-                grid.addWidget(key_label, row, 0, Qt.AlignmentFlag.AlignLeft)
-                grid.addWidget(desc, row, 1)
-            layout.addLayout(grid)
-
-            if section == "Lists":
-                note = QLabel(config.SHORTCUT_REFERENCE_FOOTNOTE)
-                note.setWordWrap(True)
-                note.setStyleSheet("color: #888; font-size: 9pt;")
-                layout.addSpacing(6)
-                layout.addWidget(note)
-
-        layout.addSpacing(16)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        close_btn = QPushButton("Close")
-        close_btn.setDefault(True)
-        close_btn.clicked.connect(self.accept)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-
-
-# ---------------------------------------------------------------------------
-# SettingsDialog — global app preferences (opened from the tray menu)
-# ---------------------------------------------------------------------------
-class SettingsDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        # Plain "Settings" — desktop shells prepend the app name themselves,
-        # so a longer title gets duplicated and truncated by the WM.
-        self.setWindowTitle("Settings")
-        self.setModal(False)
-        self.resize(380, 180)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(10)
-
-        title = QLabel("Settings")
-        title.setStyleSheet("font-size: 14pt; font-weight: 600;")
-        layout.addWidget(title)
-
-        self.autostart_cb = QCheckBox("Launch on system startup")
-        self.autostart_cb.setChecked(autostart.is_enabled())
-        self.autostart_cb.toggled.connect(self._on_autostart_toggled)
-        layout.addWidget(self.autostart_cb)
-
-        self.status = QLabel("")
-        self.status.setStyleSheet("color: #cc0000; font-size: 9pt;")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
-
-        layout.addStretch()
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        close_btn = QPushButton("Close")
-        close_btn.setDefault(True)
-        close_btn.clicked.connect(self.accept)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-
-    def _on_autostart_toggled(self, checked: bool):
-        try:
-            autostart.set_enabled(checked)
-            self.status.clear()
-        except OSError as e:
-            # Revert the checkbox so the UI matches reality, then explain.
-            self.autostart_cb.blockSignals(True)
-            self.autostart_cb.setChecked(autostart.is_enabled())
-            self.autostart_cb.blockSignals(False)
-            self.status.setText(f"Could not update autostart: {e}")

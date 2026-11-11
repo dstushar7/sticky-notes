@@ -1,8 +1,11 @@
 name: Publish Snap to Store
 
+# edge branch push      -> edge channel   (testers: snap install --edge)
+# GitHub release        -> stable channel (everyone)
+# main is not published on its own: it ships to stable through a release.
 on:
   push:
-    branches: [main]
+    branches: [edge]
   release:
     types: [published]
 
@@ -29,8 +32,11 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "channel=stable" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "${{ github.ref }}" = "refs/heads/edge" ]; then
             echo "channel=edge" >> "$GITHUB_OUTPUT"
+          else
+            echo "Refusing to publish from ${{ github.ref }}" >&2
+            exit 1
           fi
 
       - name: Publish the Snap to the Store
