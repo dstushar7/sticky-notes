@@ -4,11 +4,13 @@
 ![Python](https://img.shields.io/badge/python-3.10+-blue?logo=python)
 ![PyQt6](https://img.shields.io/badge/PyQt6-GUI-green)
 ![License: MIT](https://img.shields.io/badge/license-MIT-yellow)
-![Installed size](https://img.shields.io/badge/installed%20size-~26%20MB-brightgreen)
+![Installed size](https://img.shields.io/badge/installed%20size-~28%20MB-brightgreen)
 
-A desktop **Sticky Notes** app for Linux, built with **Python** and **PyQt6** — frameless, glass-styled, outrageously pretty, and featherweight (~26 MB installed).  
-Jot down thoughts, ideas, and reminders right on your desktop with rich text, 7 color themes, and a one-click collapse-to-pill UI.  
+A desktop **Sticky Notes** app for Linux, built with **Python** and **PyQt6** — frameless, calm, outrageously pretty, and featherweight (~28 MB installed).  
+Jot down thoughts, lists, and reminders right on your desktop with rich text, checklists, 7 colour themes, and per-note opacity.  
 Notes save locally and are restored exactly where you left them between sessions.
+
+![Sticky Notes on Ubuntu: seven notes in different colours — a numbered list, a pinned checklist, a collapsed note showing 1/4 progress](Screenshots/v4-1-desktop.png)
 
 ---
 
@@ -18,7 +20,9 @@ Notes save locally and are restored exactly where you left them between sessions
 - 🏷️ **Editable note titles** — click the title pill to rename; a smart default auto-fills from the first body line until you set a custom name
 - 💾 Auto-saves note content, title, position, size, theme, and last-edited time every 5 seconds
 - 🎨 **7 color themes** — Yellow, Green, Pink, Purple, Blue, Gray, Charcoal
+- 📌 **Keep on top** — pin a note above every other window (pin button in the title bar, or `•••` → Keep on top)
 - 🫥 **Per-note opacity** — `•••` → Opacity slider (50–100%). Only the paper fades; text stays solid, and the note turns solid while you hover or type in it
+- ☑️ **Checklists** — `Ctrl+Shift+K`; ticked items fade and strike through, and a collapsed note shows its progress (e.g. `1/4`) in the title bar
 - 🧘 **Calm notes** — the formatting toolbar appears only on the note you're typing in; at rest a note shows when it was last edited
 - 🗂️ **All notes** — tray → All notes… lists every note with search and a colour filter; click one to bring it forward
 - ↩️ **Undo delete** — a "Note deleted · Undo" toast gives you a few seconds to change your mind
@@ -28,10 +32,30 @@ Notes save locally and are restored exactly where you left them between sessions
 - 🪄 **Collapse / expand** — double-click anywhere on the title bar outside the title to collapse a note to just its header
 - 📤 **Share & Receive** — `•••` → Share copies a note as a short piece of text; paste it in any chat, and the other person adds it with `•••` → Receive (or the tray menu). Same title, text, formatting and color — no account, no cloud
 - 🖱️ **Resizable from all 8 edges and corners** — no OS chrome needed
-- 🧩 System tray integration listing your five most recently edited notes
-- 👁️ "Show All Notes" support to bring all notes to the front
+- 🧩 **Lives in the system tray** — new note, All notes, Bring all to front, and your five most recently edited notes
+- 🙈 **Hide from the dock** — optional: notes stay off the dock and taskbar and are reached from the tray icon instead (turned off automatically on desktops without a tray)
 - 🚀 **Launch on system startup** — on by default for new installs; toggle in Settings to disable. The app auto-launches quietly to your tray on login, restores your saved notes, and never pops a blank window at you when there's nothing to show
 - 🟢 Packaged as a **Snap app** for easy Linux installation
+
+---
+
+## 📸 Screenshots
+
+| | |
+|---|---|
+| ![Note options menu with the opacity slider at 70%; code shows through the note](Screenshots/v4-2-options-and-opacity.png) | ![Tray menu with recent notes](Screenshots/v4-3-tray-menu.png) |
+| **Options & opacity** — colours, opacity, keep on top, share | **Tray menu** — your recent notes a click away |
+| ![All notes window with search and colour filter](Screenshots/v4-4-all-notes.png) | ![Receive a note dialog with a live preview](Screenshots/v4-5-receive-a-note.png) |
+| **All notes** — search and filter every note | **Receive** — paste a shared note, see it before adding it |
+
+---
+
+## 🖥️ Desktop support
+
+Tested on **Ubuntu 24.04** (GNOME, X11 and Wayland), **KDE Plasma 6** (Wayland), **GNOME 51** (Wayland) and **XFCE 4.20** (X11).
+
+- On Wayland the app runs through XWayland, so keep-on-top, hide-from-dock and remembered positions work there too.
+- The tray icon needs a system tray. Ubuntu, KDE and XFCE have one built in; on plain GNOME (e.g. Fedora Workstation) install the **AppIndicator and KStatusNotifierItem Support** extension.
 
 ---
 
@@ -41,6 +65,12 @@ Notes save locally and are restored exactly where you left them between sessions
 
 ```bash
 sudo snap install stickynotes-dabobroto
+```
+
+Want new features before they reach everyone? The **edge** channel gets test builds first:
+
+```bash
+sudo snap install stickynotes-dabobroto --edge      # or: sudo snap refresh stickynotes-dabobroto --edge
 ```
 
 ---
@@ -73,7 +103,7 @@ sudo snap install stickynotes-dabobroto
 ## 🏃 Usage
 
 Once launched, a sticky notes icon appears in your **system tray**.  
-Right-click the tray icon to:
+Click the tray icon to:
 
 - 📝 **New note** — creates a note in your chosen colour (Settings → General)
 - 🗂️ **All notes…** — every note, searchable, filterable by colour
@@ -87,7 +117,7 @@ Right-click the tray icon to:
 
 | Action | How |
 |--------|-----|
-| **New note (same color)** | Click the `+` button in the title bar |
+| **New note (same color)** | Click the `+` button in the title bar, or `Ctrl+N` |
 | **Rename note** | Click the title text in the title bar; press Enter to commit, Escape to cancel, or click away |
 | **Color / opacity / share / delete** | Click the `•••` button → options menu (shows on hover) |
 | **Keep on top** | Pin button in the title bar (shows on hover; stays visible while pinned) |
@@ -96,6 +126,7 @@ Right-click the tray icon to:
 | **Underline** | `Ctrl+U` |
 | **Strikethrough** | `Ctrl+Shift+S` |
 | **Bullet list on/off** | `Ctrl+Shift+L` |
+| **Checklist on/off** | `Ctrl+Shift+K`; click a box to tick it |
 | **Continue list item** | `Enter` |
 | **Break out of list** | `Shift+Enter` |
 | **Continue a typed `1.` / `a.` / `-` list** | `Enter` (on an empty item: step out a level / end the list) |
@@ -158,10 +189,17 @@ sticky-notes/
 │   ├── note_window.py       # NoteTextEdit, ChecklistHighlighter, OptionsPanel, TitleBar, FormatBar, NoteFooter, StickyNote
 │   ├── chrome.py            # All notes, Settings (General/Shortcuts/About), Receive, Undo toast
 │   ├── widgets.py           # FloatingButton, ToggleSwitch, MenuRow
-│   ├── tray_manager.py      # Tray icon, note lifecycle, dynamic "Show Note" submenu
+│   ├── tray_manager.py      # Tray icon and menu (Recent notes), note lifecycle
+│   ├── richtext.py          # Paste sanitiser: keeps only formatting you could have typed
+│   ├── sharing.py           # Share / Receive text format
+│   ├── whats_new.py         # One-time "What's new" note after an upgrade
+│   ├── xwm.py               # X11 window states: keep on top, hide from dock
 │   ├── autostart.py         # XDG autostart entry management
 │   └── utils.py             # Icon creation, get_theme(), apply_theme_to_window()
 │
+├── stickynotes-redesign/    # Interactive design prototype (open index.html in a browser)
+├── Screenshots/             # Store and README screenshots
+├── com.dabobrotosarkar.StickyNotes.metainfo.xml   # AppStream metadata
 ├── run_stickynotes.py       # Entry script to launch the app
 ├── requirements.txt         # Dependency list
 ├── .gitignore
@@ -186,18 +224,20 @@ pip install -r requirements.txt
 
 | Shortcut | Action |
 |----------|--------|
+| `Ctrl+N` | New note |
 | `Ctrl+B` | Bold |
 | `Ctrl+I` | Italic |
 | `Ctrl+U` | Underline |
 | `Ctrl+Shift+S` | Strikethrough |
 | `Ctrl+Shift+L` | Toggle bullet list |
+| `Ctrl+Shift+K` | Toggle checklist |
 | `Tab` | Indent (sublist) inside a list |
 | `Shift+Tab` | Outdent inside a list |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Y` | Redo |
 | `Ctrl+A` | Select all |
 
-All formatting actions are also available via the **bottom toolbar** on each note: `B` `I` `U` `S` `•`. Buttons highlight when the cursor is in already-formatted text.
+All formatting actions are also on the **formatting toolbar**, which appears at the bottom of the note you're typing in: `B` `I` `U` `S` · bullet list · checklist. Buttons highlight when the cursor is in already-formatted text. The full list is also in tray → Settings… → Shortcuts.
 
 ---
 
@@ -233,8 +273,19 @@ git checkout -b feature/your-feature
 git add .
 git commit -m "feat: describe your change"
 git push origin feature/your-feature
-# open a pull request
+# open a pull request against main
 ```
+
+### 🚢 Releases
+
+Publishing is automatic ([`.github/workflows/snap-publish.yml`](./.github/workflows/snap-publish.yml)):
+
+| You do | Snap Store channel |
+|--------|--------------------|
+| Push to the **`edge`** branch | `edge`: test builds |
+| Publish a **GitHub release** (tag on `main`) | `stable`: everyone |
+
+Pushing to `main` on its own publishes nothing. To ship a test build, bring `edge` up to date with `main` and push it.
 
 ---
 
@@ -243,7 +294,7 @@ git push origin feature/your-feature
 This project is licensed under the **MIT License**.  
 See the [LICENSE](./LICENSE) file for details.
 
-> License © 2025 **Tushar D. (@dstushar7)** — Open for community contributions.
+> License © 2025 **Dabobroto Sarkar (@dstushar7)** — Open for community contributions.
 
 ---
 

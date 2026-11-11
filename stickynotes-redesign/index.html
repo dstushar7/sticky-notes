@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sticky Notes Redesign</title>
+<style>
+*{box-sizing:border-box}
+:root{--pg-bg:#E9EBEF;--pg-surface:#FFFFFF;--pg-text:#16181D;--pg-muted:#5B6270;--pg-line:#D8DCE2;--pg-chip:#F0F2F5;--pg-accent:#9A6B00}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--pg-bg:#0B0C0F;--pg-surface:#15171C;--pg-text:#E7E9ED;--pg-muted:#9CA3AF;--pg-line:#272B33;--pg-chip:#1D2027;--pg-accent:#F5C400}}
+:root[data-theme="dark"]{--pg-bg:#0B0C0F;--pg-surface:#15171C;--pg-text:#E7E9ED;--pg-muted:#9CA3AF;--pg-line:#272B33;--pg-chip:#1D2027;--pg-accent:#F5C400}
+html,body{margin:0;height:100%}
+body{background:var(--pg-bg);color:var(--pg-text);font-family:"Ubuntu","Noto Sans",system-ui,sans-serif;font-size:14px;display:flex;flex-direction:column}
+button{font:inherit;color:inherit}
+
+/* ---------- page chrome ---------- */
+.top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;background:var(--pg-surface);border-bottom:1px solid var(--pg-line);flex:none}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;margin-right:6px}
+.brand .lg{width:26px;height:26px;border-radius:7px;background:#FBE36E;box-shadow:inset 0 -8px 0 #F2D24A}
+.seg{display:flex;background:var(--pg-chip);border-radius:10px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{border:0;background:none;font-size:13px;padding:6px 11px;border-radius:8px;cursor:pointer}
+.seg button.on{background:var(--pg-surface);box-shadow:0 1px 3px rgba(0,0,0,.14);font-weight:600}
+.top .sp{flex:1}
+.lbl{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--pg-muted)}
+.main{flex:1;display:flex;min-height:0}
+.stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;min-width:0}
+.desk-wrap{transform-origin:center center;flex:none}
+.panel{width:340px;flex:none;background:var(--pg-surface);border-left:1px solid var(--pg-line);overflow:auto;padding:20px}
+body.nopanel .panel{display:none}
+.panel h2{margin:0 0 4px;font-size:19px}
+.panel .where{color:var(--pg-muted);font-size:12.5px;margin:0 0 14px;line-height:1.5}
+.panel ul{margin:0;padding-left:18px;line-height:1.6}
+.panel li{margin-bottom:10px}
+.panel .q{margin-top:16px;padding:12px 14px;border-radius:12px;background:var(--pg-chip);line-height:1.55;font-size:13px}
+.panel .q b.h{display:block;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--pg-muted);margin-bottom:4px}
+.panel .try{margin-top:14px;padding:10px 12px;border-radius:12px;border:1px dashed var(--pg-line);font-size:13px;line-height:1.55}
+.before{margin-top:18px}
+.before .imgs{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+.before figure{margin:0;flex:1 1 140px;max-width:100%}
+.before img{display:block;max-width:100%;border-radius:8px;border:1px solid var(--pg-line);background:#fff}
+.before figcaption{font-size:11.5px;color:var(--pg-muted);margin-top:4px}
+@media (max-width:1000px){.main{flex-direction:column}.panel{width:auto;border-left:0;border-top:1px solid var(--pg-line)}.stage{min-height:70vh}}
+
+/* ---------- desktop ---------- */
+.desk{
+ --win-bg:#FAFAFA;--win-surface:#FFFFFF;--win-2:#F1F2F4;--win-3:#E4E6EA;--win-text:#1B1D21;--win-muted:#5F6672;--win-line:#DEE1E6;
+ --acc:#F5C400;--on-acc:#1A1A1A;--danger:#C62828;--danger-soft:#FDECEC;--ok:#1E7B3C;
+ width:1280px;height:800px;position:relative;overflow:hidden;border-radius:14px;
+ background:#3B1530;color:var(--win-text);box-shadow:0 30px 80px rgba(0,0,0,.35);user-select:none}
+.desk.dark{--win-bg:#1F2126;--win-surface:#2A2D33;--win-2:#33363D;--win-3:#3E424A;--win-text:#ECEEF1;--win-muted:#A3A9B4;--win-line:#3A3E46;--danger:#FF8A80;--danger-soft:#43211F;--ok:#6FD38F}
+.wall{position:absolute;inset:0;background:
+ radial-gradient(1200px 700px at 85% 110%,#B5452B 0%,rgba(181,69,43,0) 60%),
+ radial-gradient(900px 600px at 10% -10%,#5A2350 0%,rgba(90,35,80,0) 70%),
+ linear-gradient(150deg,#2C0E26 0%,#4A1A3F 55%,#5E2140 100%)}
+.wall::after{content:"";position:absolute;right:-140px;top:120px;width:760px;height:760px;border-radius:50%;border:90px solid rgba(255,255,255,.035)}
+.bar{position:absolute;top:0;left:0;right:0;height:30px;background:#0E0E10;color:#EDEDED;display:flex;align-items:center;padding:0 10px;font-size:13px;z-index:50}
+.bar .act{width:38px;height:16px;border-radius:8px;background:rgba(255,255,255,.18);margin-right:auto;position:relative}
+.bar .act::after{content:"";position:absolute;left:5px;top:5px;width:16px;height:6px;border-radius:3px;background:#fff}
+.bar .clock{position:absolute;left:50%;transform:translateX(-50%);font-weight:500}
+.bar .tray{display:flex;align-items:center;gap:12px;margin-left:auto}
+.bar .tray svg{width:16px;height:16px;stroke:#EDEDED;fill:none;stroke-width:2}
+.tray-btn{width:26px;height:22px;border-radius:6px;border:0;background:none;display:grid;place-items:center;cursor:pointer;padding:0}
+.tray-btn:hover,.tray-btn.on{background:rgba(255,255,255,.18)}
+.tray-btn i{display:block;width:14px;height:14px;border-radius:3px;background:#FBE36E;box-shadow:inset 0 -4px 0 #EBCB3C}
+.tray-btn.pulse{animation:pulse 1.6s ease-out 2}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(251,227,110,.8)}100%{box-shadow:0 0 0 12px rgba(251,227,110,0)}}
+
+/* ---------- notes ---------- */
+@property --op{syntax:'<percentage>';inherits:true;initial-value:100%}
+.note{--op:100%;position:absolute;border-radius:12px;background:color-mix(in srgb,var(--nb) var(--op),transparent);color:var(--nt);display:flex;flex-direction:column;overflow:hidden;
+ box-shadow:0 14px 30px rgba(0,0,0,.30),0 2px 6px rgba(0,0,0,.20);font-family:"Ubuntu","Noto Sans",sans-serif;transition:height .15s ease,box-shadow .2s,--op .25s ease}
+/* Opacity is per note (--nop). Only the paper fades, and only while idle;
+   while the note's ••• menu is open it previews the faded look so the slider is live. */
+.note.see:not(:hover):not(.focus),.note.see.popopen{--op:var(--nop);box-shadow:0 6px 16px rgba(0,0,0,.16)}
+.note.see .nh{background:color-mix(in srgb,var(--nh) var(--op),transparent)}
+.note.focus{box-shadow:0 18px 40px rgba(0,0,0,.38),0 3px 8px rgba(0,0,0,.22)}
+.note.flash{animation:flash .9s ease-out}
+@keyframes flash{0%,40%{box-shadow:0 0 0 4px #fff,0 18px 40px rgba(0,0,0,.4)}100%{box-shadow:0 14px 30px rgba(0,0,0,.30)}}
+.note.gone{animation:gone .22s ease-in forwards}
+@keyframes gone{to{transform:scale(.92);opacity:0}}
+.nh{height:40px;background:var(--nh);display:flex;align-items:center;gap:4px;padding:0 6px;flex:none;cursor:grab}
+.nh:active{cursor:grabbing}
+.chip{width:28px;height:28px;border-radius:8px;border:0;padding:0;background:var(--chip);display:grid;place-items:center;cursor:pointer;color:inherit;flex:none;
+ box-shadow:0 1px 2px rgba(0,0,0,.14)}
+.chip:hover{background:var(--chip-h)}
+.chip svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.chip.on svg{fill:currentColor}
+.ttl{font-weight:700;font-size:13.5px;padding:4px 8px;border-radius:7px;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text;outline:none;flex:none}
+.ttl:hover{background:var(--chip)}
+.ttl.editing{background:var(--nb);box-shadow:inset 0 0 0 1.5px currentColor;text-overflow:clip}
+.nh .grow{flex:1;align-self:stretch}
+.prog{font-size:11.5px;font-weight:700;padding:2px 7px;border-radius:7px;background:var(--chip);display:none;flex:none}
+.note.collapsed .prog{display:block}
+.hov{opacity:0;transition:opacity .12s}
+.note:hover .hov,.note.pinned .pin,.note.popopen .more,.note.focus .hov{opacity:1}
+.nbody{flex:1;padding:10px 16px 6px;outline:none;overflow:auto;font-size:14.5px;line-height:1.55;user-select:text;cursor:text;scrollbar-width:thin}
+.nbody p{margin:0 0 6px}
+.nbody ul,.nbody ol{margin:0 0 6px;padding-left:20px}
+.nbody li{margin:1px 0}
+.ci{display:flex;align-items:flex-start;gap:9px;margin:2px 0}
+.cb{width:17px;height:17px;border-radius:5px;border:1.8px solid currentColor;opacity:.7;flex:none;margin-top:3px;cursor:pointer;position:relative}
+.ci.done{opacity:.55;text-decoration:line-through}
+.ci.done .cb{background:currentColor;opacity:1}
+.ci.done .cb::after{content:"";position:absolute;left:4.5px;top:1px;width:4px;height:8px;border:solid var(--nb);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.nfoot{height:44px;display:flex;align-items:center;padding:0 8px 0 16px;flex:none;gap:4px}
+.meta{font-size:12px;opacity:.62;display:flex;gap:6px;align-items:center}
+.fbar{display:none;gap:4px;width:100%;justify-content:center}
+.note.focus .fbar{display:flex}
+.note.focus .meta{display:none}
+.fb{width:30px;height:30px;border-radius:8px;border:0;background:var(--chip);color:inherit;cursor:pointer;display:grid;place-items:center;font-size:14px;font-family:Georgia,serif}
+.fb:hover{background:var(--chip-h)}
+.fb svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+.fsep{width:1px;height:18px;background:currentColor;opacity:.2;margin:0 4px;align-self:center}
+.note.collapsed{height:40px!important}
+.note.collapsed .nbody,.note.collapsed .nfoot{display:none}
+.rz{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize}
+
+/* ---------- popover / menus / windows (app chrome follows the system theme) ---------- */
+.pop{position:absolute;z-index:60;width:248px;background:var(--win-surface);color:var(--win-text);border-radius:14px;padding:12px;
+ box-shadow:0 16px 40px rgba(0,0,0,.35),0 0 0 1px rgba(0,0,0,.06);animation:popin .12s ease-out}
+.desk.dark .pop{box-shadow:0 16px 40px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.08)}
+@keyframes popin{from{transform:translateY(-4px);opacity:0}}
+.swrow{display:flex;gap:6px;justify-content:space-between;padding:2px 2px 10px}
+.sw{width:26px;height:26px;border-radius:50%;border:0;cursor:pointer;position:relative;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15);padding:0}
+.sw.on::after{content:"";position:absolute;left:9px;top:5px;width:6px;height:11px;border:solid rgba(0,0,0,.75);border-width:0 2.4px 2.4px 0;transform:rotate(45deg)}
+.sw.on.dk::after{border-color:#fff}
+.sw:hover{transform:scale(1.1)}
+.sep{height:1px;background:var(--win-line);margin:6px -12px}
+.mi{display:flex;align-items:center;gap:12px;width:100%;border:0;background:none;padding:8px 8px;border-radius:9px;cursor:pointer;font-size:14px;text-align:left}
+.mi:hover{background:var(--win-2)}
+.mi svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none;opacity:.8}
+.mi .k{margin-left:auto;font-size:12px;color:var(--win-muted)}
+.mi.danger{color:var(--danger)}
+.mi.armed{background:var(--danger-soft);color:var(--danger);font-weight:700;position:relative;overflow:hidden}
+.mi.armed::after{content:"";position:absolute;left:0;bottom:0;height:3px;background:var(--danger);animation:drain 4s linear forwards}
+@keyframes drain{from{width:100%}to{width:0}}
+.mi .dot{width:12px;height:12px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
+.opa{padding:4px 8px 10px}
+.opa-h{display:flex;align-items:center;gap:12px;font-size:14px;margin-bottom:8px}
+.opa-h svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none;opacity:.8}
+.opa-h .v{margin-left:auto;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;min-width:42px;text-align:center;padding:2px 6px;border-radius:7px;background:var(--win-2)}
+.opa input{display:block;width:100%;margin:0;accent-color:var(--win-text);cursor:pointer}
+.opa .ends{display:flex;justify-content:space-between;font-size:11px;color:var(--win-muted);margin-top:4px}
+.appwin{position:absolute;z-index:0;border-radius:12px;overflow:hidden;background:#1E1F22;color:#D4D4D4;box-shadow:0 20px 50px rgba(0,0,0,.45);display:flex;flex-direction:column}
+.appwin .ah{height:38px;background:#2B2D31;display:flex;align-items:center;gap:12px;padding:0 14px;font-size:13px;color:#B9BCC2;flex:none}
+.appwin .ah .dots{display:flex;gap:7px}
+.appwin .ah .dots i{width:12px;height:12px;border-radius:50%;background:#4A4D53}
+.appwin .ah .ttl2{flex:1;text-align:center;margin-right:56px}
+.code{flex:1;padding:14px 0;font:13.5px/1.75 ui-monospace,"Ubuntu Mono","DejaVu Sans Mono",monospace;overflow:hidden;white-space:pre}
+.code .l{display:flex}
+.code .g{width:52px;text-align:right;padding-right:18px;color:#5C6370;flex:none}
+.code .kw{color:#C586C0}.code .fn{color:#DCDCAA}.code .st{color:#CE9178}.code .cm{color:#6A9955}.code .nm{color:#B5CEA8}
+.mhead{font-size:11.5px;font-weight:700;color:var(--win-muted);padding:6px 8px 2px;letter-spacing:.04em}
+.tmenu{right:8px;top:36px;width:270px;padding:8px}
+
+.win{position:absolute;z-index:40;background:var(--win-bg);color:var(--win-text);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;
+ box-shadow:0 24px 70px rgba(0,0,0,.45),0 0 0 1px rgba(0,0,0,.08);user-select:none}
+.desk.dark .win{box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.08)}
+.wh{height:46px;display:flex;align-items:center;padding:0 8px 0 16px;gap:10px;flex:none;border-bottom:1px solid var(--win-line);background:var(--win-surface)}
+.wh h3{margin:0;font-size:14.5px;font-weight:700;flex:1;text-align:center}
+.wx{width:30px;height:30px;border-radius:50%;border:0;background:var(--win-2);cursor:pointer;display:grid;place-items:center}
+.wx:hover{background:var(--win-3)}
+.wx svg,.ic{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.btn{height:36px;border-radius:10px;border:0;padding:0 16px;font-weight:600;font-size:13.5px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;background:var(--win-2)}
+.btn:hover{background:var(--win-3)}
+.btn.pri{background:var(--acc);color:var(--on-acc)}
+.btn.pri:hover{filter:brightness(.96)}
+.btn.pri[disabled]{opacity:.45;cursor:default}
+.btn.green{background:#1E7B3C;color:#fff}
+.field{height:38px;border-radius:10px;border:1.5px solid var(--win-line);background:var(--win-surface);display:flex;align-items:center;gap:8px;padding:0 12px;color:var(--win-muted)}
+.field:focus-within{border-color:var(--acc)}
+.field input{border:0;outline:0;background:none;font:inherit;color:var(--win-text);flex:1;min-width:0}
+.hub-top{display:flex;gap:10px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--win-line)}
+.hub-top .field{flex:1}
+.fdots{display:flex;gap:5px}
+.fdot{width:22px;height:22px;border-radius:50%;border:0;cursor:pointer;padding:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18);opacity:.8}
+.fdot.on{opacity:1;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18),0 0 0 2px var(--win-bg),0 0 0 4px var(--win-text)}
+.fdot.all{background:conic-gradient(#FBE36E 0 14%,#A3E2B2 0 28%,#F6A9BC 0 42%,#CBAAF7 0 57%,#9AD8F6 0 71%,#CFCFCF 0 85%,#3C3D41 0)}
+.hub-body{flex:1;overflow:auto;padding:16px}
+.hub-sec{font-size:12px;font-weight:700;color:var(--win-muted);margin:0 0 10px;display:flex;justify-content:space-between}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:22px}
+.card{border-radius:12px;overflow:hidden;background:var(--nb);color:var(--nt);border:0;padding:0;text-align:left;cursor:pointer;display:flex;flex-direction:column;height:150px;box-shadow:0 1px 3px rgba(0,0,0,.15);position:relative}
+.card:hover{box-shadow:0 0 0 2px var(--win-text),0 6px 16px rgba(0,0,0,.2)}
+.card .ch{background:var(--nh);padding:8px 10px;font-weight:700;font-size:13px;display:flex;gap:6px;align-items:center}
+.card .ch span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .ch svg{width:13px;height:13px;fill:currentColor;stroke:currentColor}
+.card .cbd{padding:8px 10px;font-size:12.5px;line-height:1.45;flex:1;overflow:hidden;opacity:.85}
+.card .cft{padding:0 10px 8px;font-size:11px;opacity:.6}
+.empty{color:var(--win-muted);padding:30px;text-align:center}
+.trash-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--win-surface);border:1px solid var(--win-line);margin-bottom:8px}
+.trash-row .dot{width:12px;height:12px;border-radius:50%}
+.trash-row .t{flex:1}
+.trash-row .s{font-size:12px;color:var(--win-muted)}
+
+.set{display:flex;flex:1;min-height:0}
+.set-nav{width:180px;padding:12px;border-right:1px solid var(--win-line);background:var(--win-surface);display:flex;flex-direction:column;gap:2px}
+.set-nav button{border:0;background:none;padding:9px 12px;border-radius:9px;text-align:left;cursor:pointer;display:flex;gap:10px;align-items:center;font-size:14px}
+.set-nav button:hover{background:var(--win-2)}
+.set-nav button.on{background:var(--win-2);font-weight:700}
+.set-body{flex:1;overflow:auto;padding:20px 24px}
+.set-body h4{margin:0 0 12px;font-size:17px}
+.grp{background:var(--win-surface);border:1px solid var(--win-line);border-radius:12px;margin-bottom:16px}
+.srow{display:flex;gap:14px;align-items:center;padding:13px 16px;width:100%;border:0;background:none;text-align:left;cursor:pointer}
+.srow + .srow{border-top:1px solid var(--win-line)}
+.srow .tx{flex:1}
+.srow .a{font-weight:600;font-size:14px}
+.srow .b{font-size:12.5px;color:var(--win-muted);margin-top:2px;line-height:1.45}
+.srow.dis{cursor:default}
+.srow.dis .a{color:var(--win-muted)}
+.tg{width:42px;height:24px;border-radius:12px;background:var(--win-3);position:relative;flex:none}
+.tg::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .15s}
+.tg.on{background:#3A7D44}
+.tg.on::after{left:21px}
+.srow.dis .tg{opacity:.5}
+.cpick{display:flex;gap:8px}
+.kgrp{margin-bottom:18px}
+.kgrp h5{margin:0 0 8px;font-size:12px;font-weight:700;color:var(--win-muted);letter-spacing:.05em;text-transform:uppercase}
+.krow{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--win-line)}
+.krow:last-child{border-bottom:0}
+.kbd{display:inline-flex;gap:4px;flex-wrap:wrap}
+.kbd kbd{font-family:inherit;font-size:12px;font-weight:600;padding:2px 7px;border-radius:6px;background:var(--win-surface);border:1px solid var(--win-line);border-bottom-width:2px}
+.kbd .gest{font-size:12.5px;color:var(--win-muted);font-style:italic}
+.about{display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:10px}
+.about .ai{width:72px;height:72px;border-radius:18px;background:#FBE36E;box-shadow:inset 0 -18px 0 #F2D24A,0 6px 16px rgba(0,0,0,.2);margin-bottom:14px}
+.about h4{margin:0;font-size:22px}
+.about .v{color:var(--win-muted);margin:2px 0 10px}
+.about .row{display:flex;gap:8px;margin:16px 0 14px;flex-wrap:wrap;justify-content:center}
+.about .small{font-size:12.5px;color:var(--win-muted);line-height:1.6}
+.about a{color:inherit}
+
+.rcv{padding:18px 20px;display:flex;flex-direction:column;gap:12px;flex:1;min-height:0}
+.rcv textarea{width:100%;height:84px;resize:none;border-radius:10px;border:1.5px solid var(--win-line);background:var(--win-surface);color:var(--win-text);font:12.5px/1.5 ui-monospace,monospace;padding:10px 12px;outline:none}
+.rcv textarea:focus{border-color:var(--acc)}
+.rcv .lab{font-size:13px;font-weight:600}
+.rcv .ok{font-size:12.5px;color:var(--ok);display:flex;gap:6px;align-items:center;font-weight:600}
+.prev{border-radius:12px;background:var(--win-2);padding:16px;display:flex;justify-content:center}
+.prev .card{width:230px;height:auto;cursor:default}
+.prev .card:hover{box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.wfoot{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--win-line);background:var(--win-surface)}
+
+.toast{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);background:#1E2026;color:#fff;border-radius:12px;padding:10px 10px 10px 16px;font-size:13.5px;display:flex;gap:14px;align-items:center;z-index:70;box-shadow:0 10px 30px rgba(0,0,0,.4);animation:tin .18s ease-out;white-space:nowrap}
+.toast .btn{height:30px;background:rgba(255,255,255,.12);color:#FBE36E}
+.toast.solo{padding-right:16px}
+@keyframes tin{from{transform:translate(-50%,8px);opacity:0}}
+
+/* design-system board */
+.ds{position:absolute;inset:30px 0 0;background:var(--win-bg);color:var(--win-text);overflow:auto;padding:26px 34px;user-select:text}
+.ds h3{margin:0 0 4px;font-size:22px}
+.ds .sub{color:var(--win-muted);margin:0 0 20px}
+.ds h4{font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--win-muted);margin:22px 0 10px}
+.pal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px}
+.pal .p{border-radius:12px;overflow:hidden;background:var(--nb);color:var(--nt);box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.pal .p .ph{background:var(--nh);padding:8px 10px;font-weight:700;font-size:13px}
+.pal .p .pb{padding:8px 10px 10px;font-size:11.5px;line-height:1.6}
+.pal .p code{font-family:ui-monospace,monospace;font-size:11px}
+.comp{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+.comp .c{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.comp .cl{font-size:12px;color:var(--win-muted)}
+.spec{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.spec div{background:var(--win-surface);border:1px solid var(--win-line);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5}
+.spec b{display:block;font-size:11.5px;color:var(--win-muted);font-weight:700}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="lg"></span>Sticky Notes redesign</div>
+  <div class="seg" id="scenes"></div>
+  <span class="sp"></span>
+  <span class="lbl">Desktop</span>
+  <div class="seg" id="mode"><button data-v="light">Light</button><button data-v="dark">Dark</button></div>
+  <div class="seg" id="pnl"><button data-v="on">Notes</button><button data-v="off">Hide</button></div>
+</header>
+<div class="main">
+  <div class="stage" id="stage"><div class="desk-wrap" id="wrap"><div class="desk" id="desk"></div></div></div>
+  <aside class="panel" id="panel"></aside>
+</div>
+
+<script>
+/* ---------- icons ---------- */
+const P = {
+ plus:'<path d="M12 5v14M5 12h14"/>',
+ pin:'<path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/>',
+ dots:'<circle cx="5.5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor"/>',
+ x:'<path d="M6 6l12 12M18 6 6 18"/>',
+ list:'<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="18" r="1" fill="currentColor"/>',
+ check:'<rect x="3" y="4" width="6" height="6" rx="1.5"/><path d="m3.8 16.5 1.6 1.6L8.6 15M12 7h9M12 17h9"/>',
+ share:'<path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>',
+ receive:'<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>',
+ trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+ fold:'<path d="M4 6h16M4 12h16"/><path d="m9 17 3 3 3-3"/>',
+ search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+ gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
+ keys:'<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+ info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.4"/>',
+ grid:'<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+ front:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+ power:'<path d="M12 3v9"/><path d="M6.3 7a8 8 0 1 0 11.4 0"/>',
+ clock:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+ undo:'<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+ ok:'<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16.5 9.5"/>',
+ wifi:'<path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/>',
+ vol:'<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9a4 4 0 0 1 0 6"/>',
+ bat:'<rect x="2.5" y="7" width="17" height="10" rx="2.5"/><path d="M22 10.5v3"/>',
+ restore:'<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/>',
+ see:'<rect x="3" y="3" width="13" height="13" rx="2.5"/><rect x="8" y="8" width="13" height="13" rx="2.5" stroke-dasharray="2.5 2.5"/>'
+};
+const I = (n, cls='') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
+
+/* ---------- themes (refined) ---------- */
+const TH = {
+ yellow:  {name:'Yellow',   b:'#FFF39C', h:'#FBE36E', t:'#2B2410', was:['#FFF176','#F9E44A','#1a1a1a']},
+ green:   {name:'Green',    b:'#C6EFCF', h:'#A3E2B2', t:'#12291A', was:['#B5EBBF','#8FD9A0','#1a1a1a']},
+ pink:    {name:'Pink',     b:'#FBCAD5', h:'#F6A9BC', t:'#36111B', was:['#F9B8C6','#F48FAA','#1a1a1a']},
+ purple:  {name:'Purple',   b:'#E0CCFB', h:'#CBAAF7', t:'#24113D', was:['#D8B8F9','#BC8FF5','#1a1a1a']},
+ blue:    {name:'Blue',     b:'#C4EAFC', h:'#9AD8F6', t:'#0E2633', was:['#B3E5FC','#80D0F5','#1a1a1a']},
+ gray:    {name:'Gray',     b:'#E6E6E6', h:'#CFCFCF', t:'#1E1E1E', was:['#E0E0E0','#BDBDBD','#1a1a1a']},
+ charcoal:{name:'Charcoal', b:'#3C3D41', h:'#2E2F33', t:'#F1F1F1', was:['#4A4A4A','#333333','#f0f0f0'], dark:true},
+};
+const themeVars = k => { const t = TH[k]; return `--nb:${t.b};--nh:${t.h};--nt:${t.t};--chip:${t.dark?'rgba(255,255,255,.12)':'rgba(255,255,255,.55)'};--chip-h:${t.dark?'rgba(255,255,255,.2)':'rgba(255,255,255,.8)'}`; };
+
+/* ---------- sample notes ---------- */
+const ci = (txt, done) => `<div class="ci${done?' done':''}"><span class="cb" contenteditable="false"></span><span>${txt}</span></div>`;
+const DESK_NOTES = () => [
+ {id:1, theme:'yellow', title:'Tomorrow', x:60, y:64, w:270, h:230, edited:'12 min ago', html:'<ul><li>Buy groceries</li><li>Wash the car</li><li>Call the bank about the card</li></ul>'},
+ {id:2, theme:'green', title:"Today's tasks", x:362, y:84, w:290, h:236, pinned:true, edited:'Just now', html: ci('Clean the PC',true)+ci('Bathe my cat',true)+ci('Reply to Rafi')+ci('Send the invoice')},
+ {id:3, theme:'pink', title:'Trip ideas', x:684, y:58, w:300, h:220, edited:'Yesterday', html:'<p><b>Cox\'s Bazar</b> in December. Book early, prices double after the 10th.</p><p>Ask Mitu about the hotel near Kolatoli.</p>'},
+ {id:4, theme:'purple', title:'Groceries', x:60, y:330, w:270, h:250, collapsed:true, edited:'2 days ago', html: ci('Rice, 5 kg',true)+ci('Eggs')+ci('Green chillies')+ci('Tea leaves')},
+ {id:5, theme:'blue', title:'Standup', x:362, y:356, w:290, h:250, edited:'1 hr ago', html:'<p><b>Done:</b> fixed the login bug on staging.</p><p><b>Next:</b> share flow, then the tray menu.</p><p><i>Blocked:</i> nothing.</p>'},
+ {id:6, theme:'gray', title:"Month's plan", x:684, y:316, w:300, h:220, edited:'3 days ago', html: ci('Hit the gym 15 days',true)+ci('Play football 4 days')+ci('Finish one book')},
+ {id:7, theme:'charcoal', title:'Remember', x:1016, y:86, w:220, h:190, edited:'Last week', html:'<p>Make it work, make it right, make it fast.</p>'},
+];
+const SEE_NOTES = () => [
+ {id:21, theme:'green', title:"Today's tasks", x:420, y:96, w:300, h:236, pinned:true, op:70, edited:'Just now', html: ci('Clean the PC',true)+ci('Bathe my cat',true)+ci('Reply to Rafi')+ci('Send the invoice')},
+ {id:22, theme:'yellow', title:'Deploy steps', x:600, y:420, w:300, h:220, pinned:true, edited:'5 min ago', html:'<ul><li>Run the tests</li><li>Tag v3.8.0</li><li>Push to the Snap Store edge channel</li></ul>'},
+];
+const CODE = `import csv
+from datetime import date
+from pathlib import Path
+
+# Monthly sales report for the Dhaka branch
+REPORT_DIR = Path("reports")
+THRESHOLD = 25000
+
+def load_rows(path):
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f))
+
+def total_by_region(rows):
+    totals = {}
+    for row in rows:
+        region = row["region"]
+        amount = float(row["amount"])
+        totals[region] = totals.get(region, 0) + amount
+    return totals
+
+def flag_low(totals):
+    return [r for r, t in totals.items() if t < THRESHOLD]
+
+def main():
+    rows = load_rows(REPORT_DIR / "november.csv")
+    totals = total_by_region(rows)
+    for region in flag_low(totals):
+        print(f"Check {region}: {totals[region]:,.0f} taka")
+    print("Report done", date.today())
+
+if __name__ == "__main__":
+    main()`;
+function hl(line){
+  const s = line.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  if(/^\s*#/.test(s)) return `<span class="cm">${s}</span>`;
+  return s.split(/(f?"[^"]*")/).map((p,i) => i%2 ? `<span class="st">${p}</span>` :
+    p.replace(/\b(import|from|def|return|with|as|for|in|if|not|and)\b/g,'<span class="kw">$1</span>')
+     .replace(/\b(\d+)\b/g,'<span class="nm">$1</span>')
+     .replace(/\b([a-z_][a-z_]*)(?=\()/g,'<span class="fn">$1</span>')).join('');
+}
+const appHTML = () => `<div class="appwin" style="left:40px;top:50px;width:1010px;height:716px"><div class="ah"><span class="dots"><i></i><i></i><i></i></span><span class="ttl2">report.py — Text Editor</span></div>
+  <div class="code">${CODE.split('\n').map((l,i)=>`<div class="l"><span class="g">${i+1}</span><span>${hl(l)||' '}</span></div>`).join('')}</div></div>`;
+const WELCOME_NOTES = () => [
+ {id:11, theme:'yellow', title:'Welcome to Sticky Notes', x:470, y:190, w:340, h:330, edited:'Just now', html:
+   '<p>Three things worth knowing. Tick them off as you try them:</p>'+ci('Click the title above to rename this note')+ci('Double-click the empty part of the bar to fold the note away')+ci('Type <b>1.</b> or <b>-</b> and a space to start a list')+'<p style="opacity:.7;margin-top:8px">Your notes live in the tray, top right. Delete this one whenever you like.</p>'}
+];
+
+/* ---------- state ---------- */
+const st = { scene:'desktop', dark:false, panel:true, notes:DESK_NOTES(), pop:null, tray:false, win:null, setTab:'general',
+  armed:false, toast:null, focus:null, hubQ:'', hubColor:'all', autostart:true, hideDock:false, defColor:'yellow', rcvText:'', lastDeleted:null, z:10 };
+const SCENES = [
+ ['desktop','Desktop'],['options','Note options'],['seethrough','Opacity'],['tray','Tray menu'],['hub','All notes'],['settings','Settings'],['receive','Receive'],['welcome','First run'],['system','Design system']];
+
+/* ---------- render ---------- */
+const desk = document.getElementById('desk');
+function noteHTML(n){
+  const items = (n.html.match(/class="ci/g)||[]).length, done = (n.html.match(/class="ci done/g)||[]).length;
+  const t = TH[n.theme];
+  return `<div class="note${n.collapsed?' collapsed':''}${n.pinned?' pinned':''}${(n.op||100)<100?' see':''}${t.dark?' dk':''}${st.pop===n.id?' popopen':''}${st.focus===n.id?' focus':''}" id="n${n.id}" data-id="${n.id}"
+     style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px;z-index:${n.z||1};--nop:${n.op||100}%;${themeVars(n.theme)}">
+    <div class="nh" data-drag="${n.id}">
+      <button class="chip" data-a="newNote" data-id="${n.id}" aria-label="New note" title="New note (Ctrl+N)">${I('plus')}</button>
+      <span class="ttl" data-a="rename" data-id="${n.id}" title="Click to rename">${n.title}</span>
+      ${items?`<span class="prog" title="${done} of ${items} done">${done}/${items}</span>`:''}
+      <span class="grow"></span>
+      <button class="chip hov pin ${n.pinned?'on':''}" data-a="pin" data-id="${n.id}" aria-pressed="${!!n.pinned}" aria-label="Keep on top" title="${n.pinned?'Pinned on top — click to unpin':'Keep on top'}">${I('pin')}</button>
+      <button class="chip hov more" data-a="more" data-id="${n.id}" aria-label="Note options" title="Colours, share, delete">${I('dots')}</button>
+    </div>
+    <div class="nbody" contenteditable="true" spellcheck="false" data-body="${n.id}">${n.html}</div>
+    <div class="nfoot"><span class="meta">${I('clock','ic')}Edited ${n.edited}</span>
+      <div class="fbar" role="toolbar" aria-label="Formatting">
+        <button class="fb" data-fmt="bold" title="Bold (Ctrl+B)" aria-label="Bold"><b>B</b></button>
+        <button class="fb" data-fmt="italic" title="Italic (Ctrl+I)" aria-label="Italic"><i>I</i></button>
+        <button class="fb" data-fmt="underline" title="Underline (Ctrl+U)" aria-label="Underline"><u>U</u></button>
+        <button class="fb" data-fmt="strikeThrough" title="Strikethrough (Ctrl+Shift+S)" aria-label="Strikethrough"><s>S</s></button>
+        <span class="fsep"></span>
+        <button class="fb" data-fmt="insertUnorderedList" title="Bullet list (Ctrl+Shift+L)" aria-label="Bullet list">${I('list')}</button>
+        <button class="fb" data-fmt="checklist" title="Checklist (Ctrl+Shift+K)" aria-label="Checklist">${I('check')}</button>
+      </div></div>
+    <span class="rz" data-resize="${n.id}"></span>
+  </div>`;
+}
+function popHTML(){
+  if(!st.pop) return '';
+  const n = st.notes.find(x=>x.id===st.pop); if(!n) return '';
+  // Open beside the note (right, else left) so the note stays visible for the opacity preview.
+  let left = n.x + n.w + 8;
+  if(left + 248 > 1272) left = n.x - 256;
+  if(left < 8) left = Math.min(n.x + n.w - 248, 1280-256);
+  const top = Math.max(38, Math.min(n.y, 800 - 350));
+  return `<div class="pop" style="left:${Math.max(8,left)}px;top:${top}px" role="menu">
+    <div class="swrow">${Object.entries(TH).map(([k,t])=>`<button class="sw ${n.theme===k?'on':''} ${t.dark?'dk':''}" style="background:${t.b}" data-a="color" data-v="${k}" title="${t.name}" aria-label="${t.name}"></button>`).join('')}</div>
+    <div class="opa"><label class="opa-h" for="opa-${n.id}">${I('see')}Opacity<span class="v" id="opav">${n.op||100}%</span></label>
+      <input type="range" id="opa-${n.id}" min="50" max="100" step="5" value="${n.op||100}" data-opa="${n.id}" aria-valuetext="${n.op||100}%">
+      <div class="ends"><span>50%</span><span>text stays solid</span><span>100%</span></div></div>
+    <div class="sep"></div>
+    <button class="mi" data-a="pin" data-id="${n.id}">${I('pin')}${n.pinned?'Unpin from top':'Keep on top'}</button>
+    <button class="mi" data-a="fold" data-id="${n.id}">${I('fold')}${n.collapsed?'Expand':'Collapse'}<span class="k">Double-click bar</span></button>
+    <button class="mi" data-a="share" data-id="${n.id}">${I('share')}Share…<span class="k">Copies as text</span></button>
+    <button class="mi" data-a="openReceive">${I('receive')}Receive a note…</button>
+    <div class="sep"></div>
+    <button class="mi danger ${st.armed?'armed':''}" data-a="del" data-id="${n.id}">${I('trash')}${st.armed?'Click again to delete':'Delete note'}</button>
+  </div>`;
+}
+function trayHTML(){
+  if(!st.tray) return '';
+  const recent = st.notes.slice(0,5);
+  return `<div class="pop tmenu" role="menu">
+    <button class="mi" data-a="newNote">${I('plus')}New note<span class="k">Ctrl+N</span></button>
+    <button class="mi" data-a="openHub">${I('grid')}All notes…</button>
+    <button class="mi" data-a="toFront">${I('front')}Bring all to front</button>
+    <button class="mi" data-a="openReceive">${I('receive')}Receive a note…</button>
+    <div class="sep"></div><div class="mhead">RECENT</div>
+    ${recent.map(n=>`<button class="mi" data-a="jump" data-id="${n.id}"><span class="dot" style="background:${TH[n.theme].b}"></span>${n.title}<span class="k">${n.edited}</span></button>`).join('')}
+    <div class="sep"></div>
+    <button class="mi" data-a="openSettings">${I('gear')}Settings…</button>
+    <button class="mi" data-a="quit">${I('power')}Quit</button>
+  </div>`;
+}
+function cardHTML(n, extra=''){
+  const txt = n.html.replace(/<div class="ci done"><span class="cb"[^>]*><\/span>/g,'<div>✓ ').replace(/<span class="cb"[^>]*><\/span>/g,'☐ ').replace(/<\/(p|li|div)>/g,'\n').replace(/<[^>]+>/g,'').trim().slice(0,120);
+  return `<button class="card" data-a="jump" data-id="${n.id}" style="${themeVars(n.theme)}" ${extra}><span class="ch"><span>${n.title}</span>${n.pinned?I('pin'):''}</span><span class="cbd" style="white-space:pre-line">${txt}</span><span class="cft">${n.edited}</span></button>`;
+}
+function winHTML(){
+  if(st.win==='hub'){
+    const q = st.hubQ.toLowerCase();
+    const list = st.notes.filter(n => (st.hubColor==='all'||n.theme===st.hubColor) && (!q || (n.title+n.html).toLowerCase().includes(q)));
+    return `<div class="win" style="left:200px;top:96px;width:880px;height:580px" role="dialog" aria-label="All notes">
+      <div class="wh"><span style="width:30px"></span><h3>All notes</h3><button class="wx" data-a="closeWin" aria-label="Close">${I('x')}</button></div>
+      <div class="hub-top"><label class="field">${I('search','ic')}<input id="hubq" placeholder="Search titles and text" value="${st.hubQ}"></label>
+        <div class="fdots"><button class="fdot all ${st.hubColor==='all'?'on':''}" data-a="hubColor" data-v="all" title="All colours"></button>${Object.entries(TH).map(([k,t])=>`<button class="fdot ${st.hubColor===k?'on':''}" style="background:${t.b}" data-a="hubColor" data-v="${k}" title="${t.name}"></button>`).join('')}</div>
+        <button class="btn pri" data-a="newNote">${I('plus','ic')}New note</button></div>
+      <div class="hub-body">
+        <div class="hub-sec"><span>${list.length} note${list.length===1?'':'s'} · most recently edited first</span><span>Click a note to bring it forward</span></div>
+        ${list.length?`<div class="cards">${list.map(n=>cardHTML(n)).join('')}</div>`:`<div class="empty">No notes match “${st.hubQ}”.</div>`}
+        <div class="hub-sec"><span>Recently deleted · kept for 30 days</span></div>
+        <div class="trash-row"><span class="dot" style="background:${TH.blue.b};box-shadow:inset 0 0 0 1px rgba(0,0,0,.2)"></span><span class="t">Wi-Fi password for guests<div class="s">Deleted 2 days ago</div></span><button class="btn" data-a="toast" data-v="Restored to your desktop">${I('restore','ic')}Restore</button></div>
+      </div></div>`;
+  }
+  if(st.win==='settings'){
+    const tab = st.setTab;
+    let body = '';
+    if(tab==='general') body = `<h4>General</h4>
+      <div class="grp">
+        <button class="srow" data-a="tgl" data-v="autostart" role="switch" aria-checked="${st.autostart}"><span class="tx"><div class="a">Launch on system startup</div><div class="b">Opens quietly in the tray and restores your notes.</div></span><span class="tg ${st.autostart?'on':''}"></span></button>
+        <button class="srow ${st.dark?'':''}" data-a="tgl" data-v="hideDock" role="switch" aria-checked="${st.hideDock}"><span class="tx"><div class="a">Hide notes from the dock and taskbar</div><div class="b">Notes stay reachable from the tray icon. Turned off automatically on desktops without a tray.</div></span><span class="tg ${st.hideDock?'on':''}"></span></button>
+      </div>
+      <div class="grp"><div class="srow" style="cursor:default"><span class="tx"><div class="a">Colour for new notes</div><div class="b">The + on a note still copies that note's colour.</div></span>
+        <span class="cpick">${Object.entries(TH).map(([k,t])=>`<button class="sw ${st.defColor===k?'on':''} ${t.dark?'dk':''}" style="background:${t.b}" data-a="defColor" data-v="${k}" title="${t.name}" aria-label="${t.name}"></button>`).join('')}</span></div></div>`;
+    if(tab==='keys'){
+      const K = (keys) => `<span class="kbd">${keys.map(k=>k.startsWith('~')?`<span class="gest">${k.slice(1)}</span>`:`<kbd>${k}</kbd>`).join('')}</span>`;
+      const g = (h, rows) => `<div class="kgrp"><h5>${h}</h5>${rows.map(([k,w])=>`<div class="krow">${K(k)}<span>${w}</span></div>`).join('')}</div>`;
+      body = `<h4>Keyboard shortcuts</h4>`+
+        g('Notes',[[['Ctrl','N'],'New note'],[['~Double-click the bar'],'Collapse or expand'],[['~Click the title'],'Rename'],[['~Drag an edge'],'Resize']])+
+        g('Formatting',[[['Ctrl','B'],'Bold'],[['Ctrl','I'],'Italic'],[['Ctrl','U'],'Underline'],[['Ctrl','Shift','S'],'Strikethrough']])+
+        g('Lists',[[['Ctrl','Shift','L'],'Bullet list'],[['Ctrl','Shift','K'],'Checklist'],[['Tab'],'Indent (inside a list)'],[['Shift','Tab'],'Outdent'],[['Shift','Enter'],'Leave the list']]);
+    }
+    if(tab==='about') body = `<div class="about"><span class="ai"></span><h4>Sticky Notes</h4><div class="v">Version 3.7.0</div>
+      <div>The lightest, prettiest sticky notes app on Linux.</div>
+      <div class="row"><button class="btn" data-a="toast" data-v="Opens the source in your browser">Source code</button><button class="btn" data-a="toast" data-v="Opens the issue tracker">Report a bug</button><button class="btn green" data-a="toast" data-v="Opens the donation page">Donate</button></div>
+      <div class="small">© 2026 Dabobroto Sarkar · MIT licensed<br>Built with Python and PyQt6 · <a href="#" onclick="return false">contact@dabobrotosarkar.com</a></div></div>`;
+    const nb = (k,ic,l) => `<button class="${tab===k?'on':''}" data-a="setTab" data-v="${k}">${I(ic,'ic')}${l}</button>`;
+    return `<div class="win" style="left:290px;top:120px;width:700px;height:500px" role="dialog" aria-label="Settings">
+      <div class="wh"><span style="width:30px"></span><h3>Settings</h3><button class="wx" data-a="closeWin" aria-label="Close">${I('x')}</button></div>
+      <div class="set"><nav class="set-nav">${nb('general','gear','General')}${nb('keys','keys','Shortcuts')}${nb('about','info','About')}</nav><div class="set-body">${body}</div></div></div>`;
+  }
+  if(st.win==='receive'){
+    const valid = st.rcvText.trim().startsWith('Sticky Note:');
+    const sample = {id:99, theme:'green', title:'Release checklist', html: ci('Bump the version',true)+ci('Write the changelog')+ci('Publish to the Snap Store'), edited:'Shared by Rafi'};
+    return `<div class="win" style="left:380px;top:140px;width:520px;height:480px" role="dialog" aria-label="Receive a note">
+      <div class="wh"><span style="width:30px"></span><h3>Receive a note</h3><button class="wx" data-a="closeWin" aria-label="Close">${I('x')}</button></div>
+      <div class="rcv"><label class="lab" for="rcv">Paste the text someone shared with you</label>
+        <textarea id="rcv" spellcheck="false" placeholder="Sticky Note: …&#10;SN1:…">${st.rcvText}</textarea>
+        ${valid?`<div class="ok">${I('ok','ic')}Found a note. This is how it will look:</div><div class="prev">${cardHTML(sample,'tabindex="-1"')}</div>`
+               :`<div class="b" style="font-size:12.5px;color:var(--win-muted)">Paste a shared note and a preview appears here. If you copied one already, it is filled in for you.</div>`}
+      </div>
+      <div class="wfoot"><button class="btn" data-a="closeWin">Cancel</button><button class="btn pri" data-a="addReceived" ${valid?'':'disabled'}>Add note</button></div></div>`;
+  }
+  return '';
+}
+function systemHTML(){
+  const lum = h => { const c = h.match(/\w\w/g).map(x=>parseInt(x,16)/255).map(v=>v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)); return .2126*c[0]+.7152*c[1]+.0722*c[2]; };
+  const cr = (a,b) => { const [x,y] = [lum(a.slice(1)),lum(b.slice(1))].sort((p,q)=>q-p); return ((x+.05)/(y+.05)).toFixed(1); };
+  return `<div class="ds"><h3>Design system</h3><p class="sub">Tokens and parts every screen uses. Note colours stay the same in light and dark desktops; app chrome (menus, windows) follows the system theme.</p>
+    <h4>Note colours: refined vs today</h4>
+    <div class="pal">${Object.entries(TH).map(([k,t])=>`<div class="p" style="${themeVars(k)}"><div class="ph">${t.name}</div><div class="pb">Body <code>${t.b}</code><br>Bar <code>${t.h}</code><br>Text <code>${t.t}</code><br>Contrast <b>${cr(t.t,t.b)}:1</b><br><span style="opacity:.65">Was <code>${t.was[0]}</code> / <code>${t.was[1]}</code></span></div></div>`).join('')}</div>
+    <h4>Components</h4>
+    <div class="comp">
+      <div class="c"><span class="cl">Title-bar chips</span><div style="display:flex;gap:6px;padding:6px;border-radius:10px;${themeVars('yellow')};background:var(--nh)"><span class="chip">${I('plus')}</span><span class="chip on">${I('pin')}</span><span class="chip">${I('dots')}</span></div></div>
+      <div class="c"><span class="cl">Format toolbar (only while typing)</span><div style="display:flex;gap:4px;padding:8px;border-radius:10px;${themeVars('blue')};background:var(--nb);color:var(--nt)"><span class="fb"><b>B</b></span><span class="fb"><i>I</i></span><span class="fb"><u>U</u></span><span class="fb"><s>S</s></span><span class="fsep"></span><span class="fb">${I('list')}</span><span class="fb">${I('check')}</span></div></div>
+      <div class="c"><span class="cl">Checklist items</span><div style="padding:8px 12px;border-radius:10px;${themeVars('green')};background:var(--nb);color:var(--nt);width:200px">${ci('Open item')}${ci('Done item',true)}</div></div>
+      <div class="c"><span class="cl">Collapsed note with progress</span><div class="note collapsed" style="position:relative;width:240px;${themeVars('purple')}"><div class="nh"><span class="chip">${I('plus')}</span><span class="ttl">Groceries</span><span class="prog">1/4</span><span class="grow"></span></div></div></div>
+      <div class="c"><span class="cl">Buttons</span><div style="display:flex;gap:8px"><span class="btn pri">Add note</span><span class="btn">Cancel</span><span class="btn green">Donate</span></div></div>
+      <div class="c"><span class="cl">Switch</span><div style="display:flex;gap:8px"><span class="tg on"></span><span class="tg"></span></div></div>
+      <div class="c"><span class="cl">Colour swatches</span><div style="display:flex;gap:6px">${Object.entries(TH).map(([k,t])=>`<span class="sw ${k==='yellow'?'on':''} ${t.dark?'dk':''}" style="background:${t.b};display:inline-block"></span>`).join('')}</div></div>
+    </div>
+    <h4>Sizes</h4>
+    <div class="spec"><div><b>Note corner radius</b>12 px (was 8)</div><div><b>Title bar</b>40 px, chips 28 px, radius 8</div><div><b>Body text</b>14.5 px / 1.55, system UI font</div><div><b>Minimum note</b>160 × 160 px (unchanged)</div>
+      <div><b>Opacity</b>Per note, 50–100% in 5% steps. Background only; 100% on hover or while typing</div>
+      <div><b>Window chrome</b>Radius 14, header 46 px</div><div><b>Popover</b>248 px wide, radius 14</div><div><b>Accent</b><code>#F5C400</code> on <code>#1A1A1A</code> text</div><div><b>Shadow</b>0 14 30 / 30% + 0 2 6 / 20%</div></div>
+  </div>`;
+}
+function render(){
+  desk.className = 'desk' + (st.dark?' dark':'');
+  const bar = `<div class="bar"><span class="act"></span><span class="clock">Mon 9 Nov  10:42</span><span class="tray">
+     <button class="tray-btn ${st.tray?'on':''} ${st.scene==='welcome'?'pulse':''}" data-a="tray" aria-label="Sticky Notes tray menu" title="Sticky Notes"><i></i></button>
+     ${I('wifi')}${I('vol')}${I('bat')}</span></div>`;
+  if(st.scene==='system'){ desk.innerHTML = `<div class="wall"></div>${bar}${systemHTML()}`; return; }
+  desk.innerHTML = `<div class="wall"></div>${bar}${st.scene==='seethrough'?appHTML():''}<div id="notes">${st.notes.map(noteHTML).join('')}</div>${winHTML()}${popHTML()}${trayHTML()}${st.toast?`<div class="toast ${st.toast.undo?'':'solo'}" role="status">${st.toast.text}${st.toast.undo?`<button class="btn" data-a="undo">${I('undo','ic')}Undo</button>`:''}</div>`:''}`;
+}
+
+/* ---------- notes panel ---------- */
+const NOTES = {
+ desktop:{t:'Desktop: notes at rest', w:'What your desktop looks like with the redesigned notes. Everything here works: drag, type, format, collapse, resize.',
+  b:['<b>Calmer notes.</b> The format bar appears only on the note you are typing in. Today every note shows its own 6-button bar all the time. At rest, the footer shows when the note was last edited.',
+     '<b>Pin and ••• appear on hover.</b> A pinned note keeps its pin visible so you can tell at a glance. + and the title stay visible.',
+     '<b>Real checkboxes.</b> Rounded boxes; ticked items fade and get struck through, instead of text-glyph ☐/☒ boxes.',
+     '<b>Collapsed checklists show progress</b> (e.g. 1/4) in the bar, so you know what is left without expanding.',
+     'Same seven colours, slightly softer and with tinted text so the notes read as paper, not plastic. See the Design system tab for exact values and contrast.',
+     'Corner radius 12 px (was 8) to match current GNOME and Ubuntu windows.'],
+  tr:'Click inside a note to see its toolbar. Select a word and press B. Click a checkbox. Double-click a bar. Drag the bottom-right corner to resize.',
+  img:[['note-yellow.png','Today: yellow note'],['note-green.png','Today: checklist'],['collapsed.png','Today: collapsed']]},
+ options:{t:'Note options (•••)', w:'Opens from ••• on any note.',
+  b:['Colours stay as a row of swatches, now with names on hover.',
+     'Actions become a proper menu with icons: Keep on top, Collapse, Share, Receive, Delete. Today Share and Receive are two buttons, and pin and collapse aren\'t in this panel at all.',
+     '<b>New: Opacity slider</b> under the colours, 50–100% with the value shown. The note previews it live while you drag. See the Opacity tab.',
+     'Collapse lists its hidden gesture (double-click the bar) right next to it. People learn shortcuts from menus.',
+     'Delete keeps your click-twice safety, now with a visible 4-second countdown bar, and an <b>Undo</b> toast after deleting.'],
+  tr:'Pick a colour. Click Delete note twice, then Undo.',
+  img:[['options-panel.png','Today: options panel']]},
+ seethrough:{t:'Opacity, per note', w:'••• → Opacity slider, on any note. The green note is at 70%; the yellow one is at 100% for comparison.',
+  b:['<b>One control, on the note.</b> An Opacity slider in the ••• menu, right under the colours, from 50% to 100% in 5% steps, with the value shown. Saved per note, like colour and pin. No global setting.',
+     '<b>Live preview.</b> While the menu is open the note shows its faded look, so you see the result as you drag.',
+     '<b>Only the paper fades.</b> Text, checkboxes and buttons stay fully solid, so the note stays readable over busy content like this code.',
+     '<b>Solid on hover and while typing.</b> Move the mouse over it or click in to type and it turns solid, so you never edit a faded note.',
+     'Works on every note, pinned or not. It is most useful on pinned notes, but there is no hidden rule to learn.',
+     'The + on a note copies its opacity along with its colour, so a new note starts out matching the one you made it from.',
+     'Floor at 50%: below that, light notes stop reading as notes on busy backgrounds.',
+     '<b>Build note:</b> paint the note background with alpha in <code>paintEvent</code> (the window is already translucent for its shadow). <code>setWindowOpacity()</code> would also fade the text, and isn\'t available on Wayland without XWayland.'],
+  tr:'Hover over the green note, then move away. Open ••• on the yellow note and drag the Opacity slider.'},
+ tray:{t:'Tray menu', w:'Click the yellow icon in the top bar.',
+  b:['Regrouped by job: create and find notes first, then recent notes, then Settings and Quit.',
+     '“Show Note ▶” (a submenu capped at 10) becomes a flat <b>Recent</b> list of 5 with colour dots, plus <b>All notes…</b> for everything else.',
+     'Keyboard Shortcuts and About move into Settings, so the menu drops from 9 entries to 6 fixed ones.',
+     'Uses the system menu look. The current code hard-codes Windows-blue (#0078d4) hover colours.'],
+  tr:'Click a recent note to jump to it. It flashes white.'},
+ hub:{t:'All notes (new)', w:'Tray → All notes…',
+  b:['One window that shows every note, with search across titles and text, a colour filter, and most recently edited first.',
+     'Click a card to bring that note forward. It flashes so you can find it among overlapping notes.',
+     '<b>Recently deleted</b> keeps notes for 30 days with Restore. This needs a small storage change (a deleted flag and date instead of removing the QSettings group).'],
+  q:'Is “Recently deleted” worth adding, or is Undo right after deleting enough?',
+  tr:'Type “gym” in search, or click a colour dot.'},
+ settings:{t:'Settings (unified)', w:'Tray → Settings…',
+  b:['<b>One window, three tabs</b> (General, Shortcuts, About), replacing three separate stock Qt dialogs that looked nothing like the app.',
+     'Switches instead of checkboxes, each with a one-line explanation. The dock option explains itself under the switch instead of in a separate grey paragraph.',
+     '<b>New:</b> pick the colour for new notes created from the tray.',
+     'Shortcuts table fixed: keycaps and gestures are aligned in one column. Today the Lists section is misaligned and “Indent to a sublist…” is clipped.'],
+  tr:'Switch tabs on the left.',
+  img:[['settings.png','Today: Settings'],['shortcuts.png','Today: Shortcuts (clipped row)'],['about.png','Today: About']]},
+ receive:{t:'Receive a note', w:'••• → Receive, or tray → Receive a note…',
+  b:['<b>Live preview:</b> as soon as a valid shared note is pasted, you see it with its colour, title and checkboxes before adding it. Today there is only a text status line.',
+     'If the clipboard already holds a shared note when the dialog opens, it is pasted for you. Most people copy, then open this.',
+     'Add note is the yellow accent button and stays disabled until the text is valid.'],
+  tr:'The box is pre-filled here. Clear it to see the empty state.',
+  img:[['receive.png','Today: Receive dialog']]},
+ welcome:{t:'First run', w:'What a new user sees after installing.',
+  b:['One welcome note teaches the three hidden gestures as a <b>checklist the user ticks off by doing them</b>: rename, collapse, start a list.',
+     'The tray icon pulses twice, so people learn where the app lives. Many users lose the app after closing their last note.',
+     'The “What’s new” note for upgrades keeps the same pattern: a normal note you read and delete.'],
+  tr:'Try what the note says: click its title, double-click its bar.'},
+ system:{t:'Design system', w:'The tokens and parts the screens use. Handy for the later move to Figma.',
+  b:['Each note colour shows the refined value, what it was, and the text contrast ratio, calculated live. All pass WCAG AA (4.5:1) for body text.',
+     'Note colours are the same on light and dark desktops. Only app chrome (menus, windows, toasts) switches.',
+     'Accent yellow #F5C400 with near-black text is used only for primary buttons, so it never competes with the notes.']},
+};
+function renderPanel(){
+  const n = NOTES[st.scene];
+  document.getElementById('panel').innerHTML = `<h2>${n.t}</h2><p class="where">${n.w}</p><ul>${n.b.map(x=>`<li>${x}</li>`).join('')}</ul>
+   ${n.tr?`<div class="try"><b>Try it:</b> ${n.tr}</div>`:''}${n.q?`<div class="q"><b class="h">Open question</b>${n.q}</div>`:''}
+   ${n.img?`<div class="before"><span class="lbl">Today (rendered from the current app)</span><div class="imgs">${n.img.map(([f,c])=>`<figure><img src="current/${f}" alt="${c}"><figcaption>${c}</figcaption></figure>`).join('')}</div></div>`:''}`;
+}
+function renderTop(){
+  document.getElementById('scenes').innerHTML = SCENES.map(([k,l])=>`<button data-scene="${k}" class="${st.scene===k?'on':''}">${l}</button>`).join('');
+  document.querySelectorAll('#mode button').forEach(b=>b.classList.toggle('on', (b.dataset.v==='dark')===st.dark));
+  document.querySelectorAll('#pnl button').forEach(b=>b.classList.toggle('on', (b.dataset.v==='on')===st.panel));
+  document.body.classList.toggle('nopanel', !st.panel);
+}
+function full(){ renderTop(); render(); renderPanel(); fit(); }
+function fit(){
+  const s = document.getElementById('stage'), w = document.getElementById('wrap');
+  const k = Math.min(1, (s.clientWidth-32)/1280, (s.clientHeight-32)/800);
+  w.style.transform = `scale(${Math.max(.3,k)})`; w.style.margin = `${(800*k-800)/2}px ${(1280*k-1280)/2}px`;
+}
+function setScene(k){
+  Object.assign(st, {scene:k, pop:null, tray:false, win:null, armed:false, toast:null, focus:null});
+  st.notes = k==='welcome' ? WELCOME_NOTES() : k==='seethrough' ? SEE_NOTES() : DESK_NOTES();
+  if(k==='options'){ st.pop = 2; }
+  if(k==='tray') st.tray = true;
+  if(k==='hub') st.win = 'hub';
+  if(k==='settings'){ st.win = 'settings'; st.setTab = 'general'; }
+  if(k==='receive'){ st.win = 'receive'; st.rcvText = 'Sticky Note: Release checklist\nSN1:eJyNkM1qwzAQhF9l0bk2+H8rSgQ...'; }
+  full();
+}
+
+/* ---------- interactions ---------- */
+let toastT, armT;
+function toast(text, undo=false){ st.toast = {text, undo}; clearTimeout(toastT); toastT = setTimeout(()=>{ st.toast=null; render(); }, undo?5000:2400); }
+const byId = id => st.notes.find(n=>n.id===+id);
+function saveBody(el){ const n = byId(el.dataset.body); if(n){ n.html = el.innerHTML; n.edited = 'Just now'; } }
+function bringFront(n){ n.z = ++st.z; const el = document.getElementById('n'+n.id); if(el) el.style.zIndex = n.z; }
+
+const ACT = {
+ tray(){ st.tray = !st.tray; st.pop = null; render(); },
+ newNote(id){
+  const src = id ? byId(id) : null;
+  const theme = src ? src.theme : st.defColor;
+  const n = {id:Date.now(), theme, op:(src?src.op||100:100), title:'New note', x:(src?src.x+30:520), y:(src?src.y+30:220), w:260, h:220, edited:'Just now', html:'', z:++st.z};
+  st.notes.unshift(n); st.tray = false; st.win = null; st.focus = n.id; render();
+  setTimeout(()=>document.querySelector(`[data-body="${n.id}"]`)?.focus(), 0);
+ },
+ rename(id, el){
+  if(el.classList.contains('editing')) return;
+  el.classList.add('editing'); el.contentEditable = 'true'; el.focus();
+  const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  const done = (keep) => { el.contentEditable = 'false'; el.classList.remove('editing'); const n = byId(id); if(keep){ n.title = el.textContent.trim().slice(0,40) || 'New note'; } el.textContent = n.title; };
+  el.onkeydown = e => { if(e.key==='Enter'){ e.preventDefault(); done(true); el.blur(); } if(e.key==='Escape'){ done(false); el.blur(); } };
+  el.onblur = () => { if(el.classList.contains('editing')) done(true); };
+ },
+ pin(id){ const n = byId(id); n.pinned = !n.pinned; bringFront(n); render(); },
+ more(id){ st.pop = st.pop===+id ? null : +id; st.armed = false; st.tray = false; render(); },
+ color(v){ const n = byId(st.pop); n.theme = v; render(); },
+ fold(id){ const n = byId(id); n.collapsed = !n.collapsed; st.pop = null; render(); },
+ share(){ st.pop = null; toast('Copied. Paste it into any chat — they add it with Receive.'); render(); },
+ openReceive(){ st.pop = null; st.tray = false; st.win = 'receive'; st.rcvText = 'Sticky Note: Release checklist\nSN1:eJyNkM1qwzAQhF9l0bk2+H8rSgQ...'; render(); },
+ del(id){
+  if(!st.armed){ st.armed = true; clearTimeout(armT); armT = setTimeout(()=>{ st.armed=false; render(); }, 4000); render(); return; }
+  clearTimeout(armT); st.armed = false; st.pop = null;
+  const el = document.getElementById('n'+id); el && el.classList.add('gone');
+  setTimeout(()=>{ const i = st.notes.findIndex(n=>n.id===+id); st.lastDeleted = st.notes.splice(i,1)[0]; toast('Note deleted', true); render(); }, 200);
+ },
+ undo(){ if(st.lastDeleted){ st.notes.push(st.lastDeleted); st.lastDeleted = null; } st.toast = null; render(); },
+ openHub(){ st.tray = false; st.win = 'hub'; st.hubQ=''; st.hubColor='all'; render(); },
+ openSettings(){ st.tray = false; st.win = 'settings'; render(); },
+ closeWin(){ st.win = null; render(); },
+ toFront(){ st.tray = false; st.notes.forEach(bringFront); toast('All notes brought to the front'); render(); },
+ jump(id){ st.tray = false; st.win = null; const n = byId(id); n.collapsed = false; bringFront(n); render(); const el = document.getElementById('n'+n.id); el.classList.add('flash'); },
+ quit(){ st.tray = false; toast('Quit closes the app. Notes come back next launch.'); render(); },
+ hubColor(v){ st.hubColor = v; render(); },
+ setTab(v){ st.setTab = v; render(); },
+ tgl(v){ st[v] = !st[v]; render(); },
+ defColor(v){ st.defColor = v; render(); },
+ addReceived(){ st.win = null; const n = {id:Date.now(), theme:'green', title:'Release checklist', x:470, y:200, w:280, h:220, edited:'Just now', z:++st.z, html: ci('Bump the version',true)+ci('Write the changelog')+ci('Publish to the Snap Store')}; st.notes.unshift(n); toast('Note added'); render(); document.getElementById('n'+n.id)?.classList.add('flash'); },
+ toast(v){ toast(v); render(); },
+};
+
+document.addEventListener('click', e => {
+  const sc = e.target.closest('[data-scene]'); if(sc){ setScene(sc.dataset.scene); return; }
+  const m = e.target.closest('#mode button'); if(m){ st.dark = m.dataset.v==='dark'; full(); return; }
+  const p = e.target.closest('#pnl button'); if(p){ st.panel = p.dataset.v==='on'; full(); return; }
+  if(!desk.contains(e.target)) return;
+  const cb = e.target.closest('.cb');
+  if(cb){ cb.parentElement.classList.toggle('done'); const body = cb.closest('[data-body]'); saveBody(body); const n = byId(body.dataset.body); return; }
+  const a = e.target.closest('[data-a]');
+  if(a){ const f = ACT[a.dataset.a]; if(f){ f(a.dataset.id || a.dataset.v, a); } return; }
+  // click outside menus closes them
+  if(st.pop || st.tray){ if(!e.target.closest('.pop')){ st.pop = null; st.tray = false; st.armed = false; render(); } }
+});
+desk.addEventListener('dblclick', e => {
+  const h = e.target.closest('.nh'); if(!h || e.target.closest('button,.ttl')) return;
+  const n = byId(h.dataset.drag); n.collapsed = !n.collapsed; render();
+});
+desk.addEventListener('mousedown', e => { if(e.target.closest('.fb')) e.preventDefault(); });
+desk.addEventListener('click', e => {
+  const fb = e.target.closest('.fb'); if(!fb) return;
+  const body = fb.closest('.note').querySelector('.nbody'); body.focus();
+  if(fb.dataset.fmt==='checklist'){
+    const sel = getSelection(); const txt = sel.toString() || 'New item';
+    document.execCommand('insertHTML', false, ci(txt.replace(/</g,'&lt;')));
+  } else document.execCommand(fb.dataset.fmt);
+  saveBody(body);
+});
+desk.addEventListener('focusin', e => {
+  const b = e.target.closest('[data-body]'); if(!b) return;
+  st.focus = +b.dataset.body; document.querySelectorAll('.note.focus').forEach(x=>x.classList.remove('focus'));
+  const el = b.closest('.note'); el.classList.add('focus'); bringFront(byId(b.dataset.body));
+});
+desk.addEventListener('focusout', e => {
+  const b = e.target.closest('[data-body]'); if(!b) return;
+  setTimeout(()=>{ if(!b.contains(document.activeElement)){ b.closest('.note')?.classList.remove('focus'); if(st.focus===+b.dataset.body) st.focus=null; } }, 0);
+});
+desk.addEventListener('input', e => {
+  if(e.target.dataset.opa){
+    // update in place: a re-render would interrupt the slider drag
+    const n = byId(e.target.dataset.opa); n.op = +e.target.value;
+    const el = document.getElementById('n'+n.id);
+    el.style.setProperty('--nop', n.op+'%'); el.classList.toggle('see', n.op<100);
+    document.getElementById('opav').textContent = n.op+'%'; e.target.setAttribute('aria-valuetext', n.op+'%');
+    return;
+  }
+  const b = e.target.closest('[data-body]'); if(b){ saveBody(b); return; }
+  if(e.target.id==='hubq'){ st.hubQ = e.target.value; const pos = e.target.selectionStart; render(); const i = document.getElementById('hubq'); i.focus(); i.setSelectionRange(pos,pos); }
+  if(e.target.id==='rcv'){ const was = st.rcvText.trim().startsWith('Sticky Note:'); st.rcvText = e.target.value; if(was !== st.rcvText.trim().startsWith('Sticky Note:')){ const pos = e.target.selectionStart; render(); const t = document.getElementById('rcv'); t.focus(); t.setSelectionRange(pos,pos); } }
+});
+/* drag + resize (coordinates in desktop space, accounting for the scale) */
+let drag = null;
+desk.addEventListener('pointerdown', e => {
+  const scale = desk.getBoundingClientRect().width / 1280;
+  const rz = e.target.closest('[data-resize]');
+  const h = e.target.closest('[data-drag]');
+  if(rz){ const n = byId(rz.dataset.resize); drag = {n, mode:'r', sx:e.clientX, sy:e.clientY, w:n.w, h:n.h, scale}; }
+  else if(h && !e.target.closest('button,.ttl')){ const n = byId(h.dataset.drag); bringFront(n); drag = {n, mode:'m', sx:e.clientX, sy:e.clientY, x:n.x, y:n.y, scale}; }
+  else return;
+  e.preventDefault();
+});
+window.addEventListener('pointermove', e => {
+  if(!drag) return; const {n, scale} = drag, dx = (e.clientX-drag.sx)/scale, dy = (e.clientY-drag.sy)/scale;
+  const el = document.getElementById('n'+n.id); if(!el) return;
+  if(drag.mode==='m'){ n.x = Math.round(Math.min(1240, Math.max(-n.w+60, drag.x+dx))); n.y = Math.round(Math.min(760, Math.max(30, drag.y+dy))); el.style.left = n.x+'px'; el.style.top = n.y+'px'; }
+  else { n.w = Math.max(160, Math.round(drag.w+dx)); n.h = Math.max(160, Math.round(drag.h+dy)); el.style.width = n.w+'px'; if(!n.collapsed) el.style.height = n.h+'px'; }
+});
+window.addEventListener('pointerup', () => { drag = null; });
+window.addEventListener('resize', fit);
+
+const q = new URLSearchParams(location.hash.slice(1));
+if(q.get('dark')) st.dark = true;
+if(q.get('nopanel')) st.panel = false;
+setScene(q.get('scene') || 'desktop');
+if(q.get('pop')){ st.pop = +q.get('pop'); render(); }
+</script>
+</body>
+</html>
