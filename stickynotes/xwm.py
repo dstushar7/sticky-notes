@@ -174,3 +174,65 @@ def mark_position_user_requested(widget) -> bool:
     except Exception:
         # Best effort: a failed hint must not break the app.
         return False
+
+
+# Blur behind a window. Only KWin offers it to X11 clients (also through XWayland in a
+# Plasma Wayland session); Mutter and xfwm4 have nothing like it.
+_BLUR_ATOM = "_KDE_NET_WM_BLUR_BEHIND_REGION"
+_blur_available = None
+
+
+def blur_behind_available() -> bool:
+    """True when the window manager blurs behind windows that ask. KWin's blur effect
+    announces itself with a property on the root window. Checked once per run.
+    """
+    global _blur_available
+    if _blur_available is not None:
+        return _blur_available
+    _blur_available = False
+    try:
+        from PyQt6.QtGui import QGuiApplication
+        if QGuiApplication.platformName() != "xcb":
+            return False
+        from Xlib import display
+        d = display.Display()
+        try:
+            atom = d.intern_atom(_BLUR_ATOM, only_if_exists=True)
+            if atom:
+                _blur_available = atom in d.screen().root.list_properties()
+        finally:
+            d.close()
+    except Exception:
+        _blur_available = False
+    return _blur_available
+
+
+def set_blur_behind(widget, rects) -> bool:
+    """Ask the WM to blur what's behind `rects` ((x, y, w, h) in device pixels, window
+    coordinates). An empty list removes the request.
+    """
+    try:
+        from Xlib import Xatom, display
+    except ImportError:
+        return False
+
+    try:
+        win_id = int(widget.winId())
+        if win_id == 0:
+            return False
+
+        d = display.Display()
+        try:
+            xwin = d.create_resource_object("window", win_id)
+            atom = d.intern_atom(_BLUR_ATOM)
+            data = [int(v) for rect in rects for v in rect]
+            if data:
+                xwin.change_property(atom, Xatom.CARDINAL, 32, data)
+            else:
+                xwin.delete_property(atom)
+            d.sync()
+            return True
+        finally:
+            d.close()
+    except Exception:
+        return False

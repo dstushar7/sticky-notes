@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sticky Notes Redesign</title>
+<title>Sticky Notes Glass</title>
 <style>
 *{box-sizing:border-box}
 :root{--pg-bg:#E9EBEF;--pg-surface:#FFFFFF;--pg-text:#16181D;--pg-muted:#5B6270;--pg-line:#D8DCE2;--pg-chip:#F0F2F5;--pg-accent:#9A6B00}
@@ -259,13 +259,95 @@ body.nopanel .panel{display:none}
 .spec{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .spec div{background:var(--win-surface);border:1px solid var(--win-line);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5}
 .spec b{display:block;font-size:11.5px;color:var(--win-muted);font-weight:700}
+
+/* ================= GLASS STYLE =================
+   Everything below is additive: remove the "glass" class from .desk and the
+   mock-up is the original Paper design again.
+   Note tint = opacity slider (50-100%) * .3 + --gb, so the slider still works
+   but never drops the glass below a readable amount of colour. */
+@property --gb{syntax:'<percentage>';inherits:true;initial-value:32%}
+.panel .glassbox{margin:0 0 16px;padding:12px 14px;border-radius:12px;border:1px solid var(--pg-line);background:var(--pg-chip);font-size:13px;line-height:1.55}
+.panel .glassbox b.h{display:block;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--pg-accent);margin-bottom:6px}
+.panel .glassbox ul{padding-left:16px}
+.panel .glassbox li{margin-bottom:6px}
+.panel .glassbox li:last-child{margin-bottom:0}
+.seg.off{opacity:.4;pointer-events:none}
+
+/* wallpapers, to judge the glass against different desktops */
+.wall.w-aurora{background:
+ radial-gradient(700px 520px at 18% 22%,#1FB6A6 0%,rgba(31,182,166,0) 62%),
+ radial-gradient(760px 560px at 82% 18%,#E0468F 0%,rgba(224,70,143,0) 60%),
+ radial-gradient(900px 600px at 62% 105%,#F29A2E 0%,rgba(242,154,46,0) 60%),
+ radial-gradient(700px 600px at 0% 100%,#3B5BDB 0%,rgba(59,91,219,0) 62%),
+ linear-gradient(150deg,#12152E,#241A45)}
+.wall.w-light{background:
+ radial-gradient(800px 560px at 15% 15%,#BFD9FF 0%,rgba(191,217,255,0) 62%),
+ radial-gradient(800px 600px at 88% 30%,#FFD3E0 0%,rgba(255,211,224,0) 60%),
+ radial-gradient(900px 600px at 55% 110%,#FFE2B8 0%,rgba(255,226,184,0) 60%),
+ linear-gradient(150deg,#EEF1F7,#E3E6EE)}
+.wall.w-light::after{border-color:rgba(60,70,110,.07)}
+
+/* tokens: app chrome becomes layers of one frosted sheet */
+.desk.glass{--nblur:blur(26px) saturate(175%);--cblur:blur(34px) saturate(180%);
+ --win-bg:rgba(248,249,251,.66);--win-surface:rgba(255,255,255,.50);--win-2:rgba(20,24,34,.07);--win-3:rgba(20,24,34,.13);--win-line:rgba(20,24,34,.11);
+ --edge:inset 0 0 0 1px rgba(255,255,255,.5),inset 0 1px 0 rgba(255,255,255,.85)}
+.desk.glass.dark{--win-bg:rgba(28,30,36,.62);--win-surface:rgba(255,255,255,.07);--win-2:rgba(255,255,255,.09);--win-3:rgba(255,255,255,.16);--win-line:rgba(255,255,255,.11);
+ --edge:inset 0 0 0 1px rgba(255,255,255,.13),inset 0 1px 0 rgba(255,255,255,.22)}
+/* no compositor blur (GNOME): same edges and sheen, more tint so text stays readable */
+.desk.glass.noblur{--nblur:none;--cblur:none;--win-bg:rgba(248,249,251,.93)}
+.desk.glass.noblur.dark{--win-bg:rgba(28,30,36,.93)}
+
+/* notes */
+.desk.glass .note{--gb:32%;--gl:.42;--gf:rgba(255,255,255,.46);border-radius:16px;
+ /* top to bottom: sheen, colour tint, frost. The frost keeps pastels from going muddy over a dark desktop. */
+ background:
+  linear-gradient(155deg,rgba(255,255,255,var(--gl)) 0%,rgba(255,255,255,calc(var(--gl) * .25)) 34%,rgba(255,255,255,0) 62%),
+  linear-gradient(color-mix(in srgb,color-mix(in srgb,var(--nb),var(--nh)) calc(var(--op) * .3 + var(--gb)),transparent) 0 0),
+  linear-gradient(var(--gf) 0 0);
+ -webkit-backdrop-filter:var(--nblur);backdrop-filter:var(--nblur);
+ transition:height .15s ease,box-shadow .2s,--op .25s ease,--gb .25s ease}
+.desk.glass .note,.desk.glass .note.see:not(:hover):not(.focus),.desk.glass .note.see.popopen{
+ box-shadow:inset 0 0 0 1px rgba(255,255,255,.38),inset 0 1px 0 rgba(255,255,255,.75),0 18px 44px rgba(0,0,0,.26),0 2px 6px rgba(0,0,0,.16)}
+.desk.glass .note:hover{--gb:40%}
+.desk.glass .note.focus{--gb:58%;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.8),inset 0 1px 0 #fff,0 22px 50px rgba(0,0,0,.34),0 3px 8px rgba(0,0,0,.2)}
+.desk.glass .note.dk{--gb:40%;--gl:.14;--gf:rgba(0,0,0,.34)}
+.desk.glass .note.dk:hover{--gb:46%}
+.desk.glass .note.dk.focus{--gb:62%}
+.desk.glass.noblur .note{--gb:52%}
+.desk.glass.noblur .note:hover{--gb:57%}
+.desk.glass.noblur .note.focus{--gb:64%}
+.desk.glass .note .nh{background:linear-gradient(rgba(255,255,255,.22),rgba(255,255,255,.04));box-shadow:inset 0 -1px 0 rgba(0,0,0,.07)}
+.desk.glass .note.dk .nh{background:linear-gradient(rgba(255,255,255,.08),rgba(255,255,255,0));box-shadow:inset 0 -1px 0 rgba(255,255,255,.08)}
+.desk.glass .chip,.desk.glass .fb,.desk.glass .prog{background:rgba(255,255,255,.30);box-shadow:inset 0 0 0 1px rgba(255,255,255,.45)}
+.desk.glass .chip:hover,.desk.glass .fb:hover{background:rgba(255,255,255,.58)}
+.desk.glass .note.dk .chip,.desk.glass .note.dk .fb,.desk.glass .note.dk .prog{background:rgba(255,255,255,.10);box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}
+.desk.glass .note.dk .chip:hover,.desk.glass .note.dk .fb:hover{background:rgba(255,255,255,.2)}
+.desk.glass .ttl.editing{background:rgba(255,255,255,.5)}
+.desk.glass .note.dk .ttl.editing{background:rgba(0,0,0,.3)}
+
+/* menus, windows, toast */
+.desk.glass .pop,.desk.glass .win{background:var(--win-bg);-webkit-backdrop-filter:var(--cblur);backdrop-filter:var(--cblur)}
+.desk.glass .pop{border-radius:16px;box-shadow:var(--edge),0 18px 44px rgba(0,0,0,.32)}
+.desk.glass .win{border-radius:18px;box-shadow:var(--edge),0 26px 70px rgba(0,0,0,.4)}
+.desk.glass .card{border:1px solid rgba(255,255,255,.5);background:color-mix(in srgb,var(--nb) 78%,transparent)}
+.desk.glass .card .ch{background:color-mix(in srgb,var(--nh) 55%,transparent)}
+.desk.glass .toast{background:rgba(24,26,32,.58);-webkit-backdrop-filter:var(--cblur);backdrop-filter:var(--cblur);border-radius:14px;
+ box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),inset 0 1px 0 rgba(255,255,255,.22),0 10px 30px rgba(0,0,0,.4)}
+.desk.glass.noblur .toast{background:rgba(24,26,32,.94)}
+.desk.glass .ds{-webkit-backdrop-filter:var(--cblur);backdrop-filter:var(--cblur)}
 </style>
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="lg"></span>Sticky Notes redesign</div>
+  <div class="brand"><span class="lg"></span>Sticky Notes glass</div>
   <div class="seg" id="scenes"></div>
   <span class="sp"></span>
+  <span class="lbl">Style</span>
+  <div class="seg" id="sty"><button data-v="glass">Glass</button><button data-v="paper">Paper</button></div>
+  <span class="lbl">Blur</span>
+  <div class="seg" id="blr"><button data-v="on" title="Desktops that blur behind windows, e.g. KDE Plasma">On</button><button data-v="off" title="Desktops without blur, e.g. GNOME / default Ubuntu">Off</button></div>
+  <span class="lbl">Wallpaper</span>
+  <div class="seg" id="wal"><button data-v="dusk">Dusk</button><button data-v="aurora">Aurora</button><button data-v="light">Light</button></div>
   <span class="lbl">Desktop</span>
   <div class="seg" id="mode"><button data-v="light">Light</button><button data-v="dark">Dark</button></div>
   <div class="seg" id="pnl"><button data-v="on">Notes</button><button data-v="off">Hide</button></div>
@@ -381,7 +463,7 @@ const WELCOME_NOTES = () => [
 ];
 
 /* ---------- state ---------- */
-const st = { scene:'desktop', dark:false, panel:true, notes:DESK_NOTES(), pop:null, tray:false, win:null, setTab:'general',
+const st = { glass:true, blur:true, wall:'dusk', scene:'desktop', dark:false, panel:true, notes:DESK_NOTES(), pop:null, tray:false, win:null, setTab:'general',
   armed:false, toast:null, focus:null, hubQ:'', hubColor:'all', autostart:true, hideDock:false, defColor:'yellow', rcvText:'', lastDeleted:null, z:10 };
 const SCENES = [
  ['desktop','Desktop'],['options','Note options'],['seethrough','Opacity'],['tray','Tray menu'],['hub','All notes'],['settings','Settings'],['receive','Receive'],['welcome','First run'],['system','Design system']];
@@ -533,15 +615,30 @@ function systemHTML(){
     <div class="spec"><div><b>Note corner radius</b>12 px (was 8)</div><div><b>Title bar</b>40 px, chips 28 px, radius 8</div><div><b>Body text</b>14.5 px / 1.55, system UI font</div><div><b>Minimum note</b>160 × 160 px (unchanged)</div>
       <div><b>Opacity</b>Per note, 50–100% in 5% steps. Background only; 100% on hover or while typing</div>
       <div><b>Window chrome</b>Radius 14, header 46 px</div><div><b>Popover</b>248 px wide, radius 14</div><div><b>Accent</b><code>#F5C400</code> on <code>#1A1A1A</code> text</div><div><b>Shadow</b>0 14 30 / 30% + 0 2 6 / 20%</div></div>
+    ${st.glass?`<h4>Glass tokens</h4>
+    <div class="spec"><div><b>Note tint, with blur</b>62% at rest, 70% on hover, 88% while typing (opacity slider at 100%)</div>
+      <div><b>Note tint, no blur</b>82% at rest, 87% on hover, 94% while typing</div>
+      <div><b>Opacity slider</b>Still 50–100%. Tint = slider × 0.3 + base, so 50% is 47% tint, not 31%</div>
+      <div><b>Charcoal note</b>+8% tint, sheen 14% instead of 42%</div>
+      <div><b>Blur</b>Notes 26 px, saturation 175%. Menus and windows 34 px, 180%</div>
+      <div><b>Edge</b>1 px inner white at 38%, plus a 1 px top highlight at 75%</div>
+      <div><b>Sheen</b>White 42% fading to 0 across the top-left 60%</div>
+      <div><b>Frost</b>White 46% under the tint (black 34% for Charcoal). Tint colour is the body and bar colours mixed 50/50</div>
+      <div><b>Radius</b>Notes and menus 16 px, windows 18 px</div>
+      <div><b>Windows and menus</b>Neutral sheet at 66% (93% without blur); inner panels are 50% white layers</div>
+      <div><b>Title bar</b>White sheen 22% to 4% and a hairline, replacing the darker solid strip</div>
+      <div><b>Chips</b>White 30% with a 45% inner border; 58% on hover</div>
+      <div><b>Cards in All notes</b>78% tint so colours stay easy to scan</div></div>`:''}
   </div>`;
 }
 function render(){
-  desk.className = 'desk' + (st.dark?' dark':'');
+  desk.className = 'desk' + (st.dark?' dark':'') + (st.glass?' glass':'') + (st.glass && !st.blur?' noblur':'');
+  const wall = `<div class="wall w-${st.wall}"></div>`;
   const bar = `<div class="bar"><span class="act"></span><span class="clock">Mon 9 Nov  10:42</span><span class="tray">
      <button class="tray-btn ${st.tray?'on':''} ${st.scene==='welcome'?'pulse':''}" data-a="tray" aria-label="Sticky Notes tray menu" title="Sticky Notes"><i></i></button>
      ${I('wifi')}${I('vol')}${I('bat')}</span></div>`;
-  if(st.scene==='system'){ desk.innerHTML = `<div class="wall"></div>${bar}${systemHTML()}`; return; }
-  desk.innerHTML = `<div class="wall"></div>${bar}${st.scene==='seethrough'?appHTML():''}<div id="notes">${st.notes.map(noteHTML).join('')}</div>${winHTML()}${popHTML()}${trayHTML()}${st.toast?`<div class="toast ${st.toast.undo?'':'solo'}" role="status">${st.toast.text}${st.toast.undo?`<button class="btn" data-a="undo">${I('undo','ic')}Undo</button>`:''}</div>`:''}`;
+  if(st.scene==='system'){ desk.innerHTML = `${wall}${bar}${systemHTML()}`; return; }
+  desk.innerHTML = `${wall}${bar}${st.scene==='seethrough'?appHTML():''}<div id="notes">${st.notes.map(noteHTML).join('')}</div>${winHTML()}${popHTML()}${trayHTML()}${st.toast?`<div class="toast ${st.toast.undo?'':'solo'}" role="status">${st.toast.text}${st.toast.undo?`<button class="btn" data-a="undo">${I('undo','ic')}Undo</button>`:''}</div>`:''}`;
 }
 
 /* ---------- notes panel ---------- */
@@ -608,9 +705,27 @@ const NOTES = {
      'Note colours are the same on light and dark desktops. Only app chrome (menus, windows, toasts) switches.',
      'Accent yellow #F5C400 with near-black text is used only for primary buttons, so it never competes with the notes.']},
 };
+/* What the glass style changes on each screen (shown above the original notes). */
+const GLASS = {
+ desktop:['<b>Tinted glass instead of paper.</b> Each note is its own colour at about 60% over a blurred desktop, with a bright top edge and a hairline border. The title bar is a light sheen, not a darker solid strip.',
+  '<b>Denser when you need it.</b> Hovering adds a little tint; clicking in to type takes the note to about 90%, so you never write on see-through glass.',
+  'Corners go from 12 to 16 px. Chips and the format bar become frosted pills.'],
+ options:['The menu is frosted too, in a neutral glass so the colour swatches read true.',
+  'The real panel is painted opaque today because translucent popups bleed through under XWayland. That stays as the fallback.'],
+ seethrough:['<b>The Opacity slider stays</b> and now sets how much colour the glass carries: 100% is about 60% tint, 50% is about 47%. The floor is higher than in Paper because dark text on thin glass over a dark wallpaper stops being readable.',
+  'Blur does the job the paper used to do: the code behind turns into soft colour instead of competing with your text. Switch Blur off to compare.'],
+ tray:['<b>Shown as glass here, but the app does not draw this menu.</b> It is a QMenu handed to the system tray, and on most desktops the shell draws it in its own style.'],
+ hub:['The window is one frosted sheet. Note cards keep most of their colour (78%) so they are quick to scan.'],
+ settings:['Sidebar, groups and fields are lighter layers of the same sheet instead of separate white boxes.'],
+ receive:['Same frosted window. The preview card keeps its colour.'],
+ welcome:['This is the first thing a new user sees, on whatever wallpaper they have. Try Light and Aurora.'],
+ system:['Glass tokens are listed at the bottom of the board.'],
+};
+const GLASS_BUILD = 'Blurring what is behind a window is done by the desktop, not by Qt. KDE Plasma offers it to apps; GNOME (default Ubuntu) does not. Most users would therefore get the <b>Blur Off</b> look, so treat that as the baseline and real blur as a bonus.';
 function renderPanel(){
   const n = NOTES[st.scene];
-  document.getElementById('panel').innerHTML = `<h2>${n.t}</h2><p class="where">${n.w}</p><ul>${n.b.map(x=>`<li>${x}</li>`).join('')}</ul>
+  const g = st.glass ? `<div class="glassbox"><b class="h">Glass style</b><ul>${GLASS[st.scene].map(x=>`<li>${x}</li>`).join('')}<li>${GLASS_BUILD}</li></ul></div>` : '';
+  document.getElementById('panel').innerHTML = `<h2>${n.t}</h2><p class="where">${n.w}</p>${g}<ul>${n.b.map(x=>`<li>${x}</li>`).join('')}</ul>
    ${n.tr?`<div class="try"><b>Try it:</b> ${n.tr}</div>`:''}${n.q?`<div class="q"><b class="h">Open question</b>${n.q}</div>`:''}
    ${n.img?`<div class="before"><span class="lbl">Today (rendered from the current app)</span><div class="imgs">${n.img.map(([f,c])=>`<figure><img src="current/${f}" alt="${c}"><figcaption>${c}</figcaption></figure>`).join('')}</div></div>`:''}`;
 }
@@ -618,6 +733,10 @@ function renderTop(){
   document.getElementById('scenes').innerHTML = SCENES.map(([k,l])=>`<button data-scene="${k}" class="${st.scene===k?'on':''}">${l}</button>`).join('');
   document.querySelectorAll('#mode button').forEach(b=>b.classList.toggle('on', (b.dataset.v==='dark')===st.dark));
   document.querySelectorAll('#pnl button').forEach(b=>b.classList.toggle('on', (b.dataset.v==='on')===st.panel));
+  document.querySelectorAll('#sty button').forEach(b=>b.classList.toggle('on', (b.dataset.v==='glass')===st.glass));
+  document.querySelectorAll('#blr button').forEach(b=>b.classList.toggle('on', (b.dataset.v==='on')===st.blur));
+  document.querySelectorAll('#wal button').forEach(b=>b.classList.toggle('on', b.dataset.v===st.wall));
+  document.getElementById('blr').classList.toggle('off', !st.glass);
   document.body.classList.toggle('nopanel', !st.panel);
 }
 function full(){ renderTop(); render(); renderPanel(); fit(); }
@@ -692,6 +811,9 @@ document.addEventListener('click', e => {
   const sc = e.target.closest('[data-scene]'); if(sc){ setScene(sc.dataset.scene); return; }
   const m = e.target.closest('#mode button'); if(m){ st.dark = m.dataset.v==='dark'; full(); return; }
   const p = e.target.closest('#pnl button'); if(p){ st.panel = p.dataset.v==='on'; full(); return; }
+  const sy = e.target.closest('#sty button'); if(sy){ st.glass = sy.dataset.v==='glass'; full(); return; }
+  const bl = e.target.closest('#blr button'); if(bl){ st.blur = bl.dataset.v==='on'; full(); return; }
+  const wl = e.target.closest('#wal button'); if(wl){ st.wall = wl.dataset.v; full(); return; }
   if(!desk.contains(e.target)) return;
   const cb = e.target.closest('.cb');
   if(cb){ cb.parentElement.classList.toggle('done'); const body = cb.closest('[data-body]'); saveBody(body); const n = byId(body.dataset.body); return; }
@@ -759,6 +881,9 @@ window.addEventListener('resize', fit);
 const q = new URLSearchParams(location.hash.slice(1));
 if(q.get('dark')) st.dark = true;
 if(q.get('nopanel')) st.panel = false;
+if(q.get('paper')) st.glass = false;
+if(q.get('noblur')) st.blur = false;
+if(['dusk','aurora','light'].includes(q.get('wall'))) st.wall = q.get('wall');
 setScene(q.get('scene') || 'desktop');
 if(q.get('pop')){ st.pop = +q.get('pop'); render(); }
 </script>

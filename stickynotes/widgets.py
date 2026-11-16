@@ -1,10 +1,11 @@
-"""Reusable widgets: ToggleSwitch, MenuRow and FloatingButton."""
+"""Reusable widgets: ToggleSwitch, MenuRow, FloatingButton and GlassSurface."""
 
+import math
 from enum import Enum
-from PyQt6.QtCore import Qt, QSize, QRectF, pyqtSignal, QPropertyAnimation, pyqtProperty, QEasingCurve
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtCore import Qt, QSize, QRectF, QPointF, pyqtSignal, QPropertyAnimation, pyqtProperty, QEasingCurve
+from PyQt6.QtGui import QColor, QPainter, QPainterPath, QLinearGradient, QPen, QBrush
 from PyQt6.QtWidgets import (
-    QPushButton, QGraphicsDropShadowEffect, QAbstractButton, QWidget, QHBoxLayout, QLabel,
+    QPushButton, QAbstractButton, QWidget, QHBoxLayout, QLabel,
     QSizePolicy,
 )
 
@@ -116,7 +117,7 @@ class MenuRow(QWidget):
 
 
 class FloatingButton(QPushButton):
-    """A translucent rounded pill button for the title bar and the format toolbar.
+    """A frosted pill button for the title bar and the format toolbar.
     Shortcuts in its tooltip are display-only; the real bindings live on the note.
     """
 
@@ -124,23 +125,22 @@ class FloatingButton(QPushButton):
         TITLE_BAR = "title_bar"
         TOOLBAR = "toolbar"
 
-    # Smaller than the bar so the drop shadow isn't clipped.
     TITLE_BAR_SIZE = 28
 
-    # Translucent "glass" colours; the charcoal theme uses the dark set.
+    # Frosted pills: a white wash with a brighter rim. The charcoal theme uses the dark set.
     _GLASS_LIGHT = {
-        "idle":    "rgba(255, 255, 255, 0.55)",
-        "hover":   "rgba(255, 255, 255, 0.75)",
-        "pressed": "rgba(255, 255, 255, 0.40)",
-        "checked": "rgba(255, 255, 255, 0.85)",
-        "border":  "rgba(0, 0, 0, 0.08)",
+        "idle":    "rgba(255, 255, 255, 0.30)",
+        "hover":   "rgba(255, 255, 255, 0.58)",
+        "pressed": "rgba(255, 255, 255, 0.22)",
+        "checked": "rgba(255, 255, 255, 0.78)",
+        "border":  "rgba(255, 255, 255, 0.45)",
     }
     _GLASS_DARK = {
         "idle":    "rgba(255, 255, 255, 0.10)",
-        "hover":   "rgba(255, 255, 255, 0.22)",
+        "hover":   "rgba(255, 255, 255, 0.20)",
         "pressed": "rgba(255, 255, 255, 0.06)",
-        "checked": "rgba(255, 255, 255, 0.28)",
-        "border":  "rgba(255, 255, 255, 0.15)",
+        "checked": "rgba(255, 255, 255, 0.30)",
+        "border":  "rgba(255, 255, 255, 0.16)",
     }
 
     def __init__(
@@ -173,16 +173,6 @@ class FloatingButton(QPushButton):
             self.setToolTip(visible)
         if tone == FloatingButton.Tone.TITLE_BAR:
             self.setFixedSize(self.TITLE_BAR_SIZE, self.TITLE_BAR_SIZE)
-            self._install_shadow()
-
-    def _install_shadow(self):
-        """Soft drop shadow (config.SHADOW_BUTTON_CHIP)."""
-        eff = QGraphicsDropShadowEffect(self)
-        blur, offset_y, alpha = config.SHADOW_BUTTON_CHIP
-        eff.setBlurRadius(blur)
-        eff.setOffset(0, offset_y)
-        eff.setColor(QColor(0, 0, 0, alpha))
-        self.setGraphicsEffect(eff)
 
     def set_extra_css(self, extra_css: str):
         """Replace the per-button CSS (e.g. bold); call apply_theme afterwards."""
@@ -222,3 +212,113 @@ class FloatingButton(QPushButton):
         """Bulk re-skin helper for a group of buttons sharing one palette."""
         for btn in buttons:
             btn.apply_theme(text_color, is_dark_theme)
+
+
+class GlassSurface(QWidget):
+    """A note's glass, painted in one pass so the layers never stack unevenly:
+    frost, colour tint, a diagonal sheen, the title bar's sheen and hairline, then a
+    bright inner edge. The title bar and body on top of it paint no background.
+    Values live in config (GLASS_*).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tint = QColor("#FDEB85")
+        self._tint_alpha = 1.0
+        self._dark = False
+        self._typing = False
+
+    def set_theme(self, theme: dict):
+        """Tint with the body and bar colours mixed half and half: the bar colour alone
+        is too strong for a whole note, the body colour alone washes out as glass."""
+        a, b = QColor(theme["bg"]), QColor(theme["title"])
+        self._tint = QColor((a.red() + b.red()) // 2, (a.green() + b.green()) // 2,
+                            (a.blue() + b.blue()) // 2)
+        self._dark = bool(theme.get("dark"))
+        self.update()
+
+    def set_tint_alpha(self, alpha: float):
+        self._tint_alpha = max(0.0, min(1.0, alpha))
+        self.update()
+
+    def set_typing(self, typing: bool):
+        if typing != self._typing:
+            self._typing = typing
+            self.update()
+
+    def coverage(self) -> float:
+        """How much of what's behind the note the frost and tint hide (0..1)."""
+        frost = (config.GLASS_FROST_DARK if self._dark else config.GLASS_FROST_LIGHT)[1]
+        return 1.0 - (1.0 - self._tint_alpha) * (1.0 - frost)
+
+    def paintEvent(self, _event):   # noqa: N802 (Qt naming)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.paint_glass(p)
+
+    def paint_glass(self, p: QPainter):
+        """Paint the whole surface in this widget's coordinates. Also called by the note
+        body to restore the glass under a checkbox, with the painter clipped to that spot."""
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        dark = self._dark
+        r = float(min(config.CORNER_RADIUS_PX, w / 2, h / 2))
+        rect = QRectF(0, 0, w, h)
+        shape = QPainterPath()
+        shape.addRoundedRect(rect, r, r)
+
+        def white(alpha: float) -> QColor:
+            c = QColor(255, 255, 255)
+            c.setAlphaF(max(0.0, min(1.0, alpha)))
+            return c
+
+        frost_hex, frost_alpha = config.GLASS_FROST_DARK if dark else config.GLASS_FROST_LIGHT
+        frost = QColor(frost_hex)
+        frost.setAlphaF(frost_alpha)
+        p.fillPath(shape, frost)
+
+        tint = QColor(self._tint)
+        tint.setAlphaF(self._tint_alpha)
+        p.fillPath(shape, tint)
+
+        # Diagonal sheen, laid out like a CSS linear-gradient at the same angle.
+        strength = config.GLASS_SHEEN_DARK if dark else config.GLASS_SHEEN_LIGHT
+        angle = math.radians(config.GLASS_SHEEN_ANGLE_DEG)
+        dx, dy = math.sin(angle), -math.cos(angle)
+        half = (abs(w * dx) + abs(h * dy)) / 2
+        centre = QPointF(w / 2, h / 2)
+        sheen = QLinearGradient(centre - QPointF(dx, dy) * half, centre + QPointF(dx, dy) * half)
+        sheen.setColorAt(0.0, white(strength))
+        sheen.setColorAt(0.34, white(strength * 0.25))
+        sheen.setColorAt(0.62, white(0.0))
+        sheen.setColorAt(1.0, white(0.0))
+        p.fillPath(shape, sheen)
+
+        # Title bar: a soft sheen in place of a darker strip, and a hairline below it
+        # (no hairline on a collapsed note, which is all bar).
+        bar_h = min(float(config.TITLE_BAR_HEIGHT), float(h))
+        top, bottom = config.GLASS_BAR_SHEEN_DARK if dark else config.GLASS_BAR_SHEEN_LIGHT
+        bar_sheen = QLinearGradient(0, 0, 0, bar_h)
+        bar_sheen.setColorAt(0.0, white(top))
+        bar_sheen.setColorAt(1.0, white(bottom))
+        bar_rect = QPainterPath()
+        bar_rect.addRect(QRectF(0, 0, w, bar_h))
+        p.fillPath(shape.intersected(bar_rect), bar_sheen)
+        if h > bar_h + r:
+            line_hex, line_alpha = config.GLASS_BAR_LINE_DARK if dark else config.GLASS_BAR_LINE_LIGHT
+            line = QColor(line_hex)
+            line.setAlphaF(line_alpha)
+            p.fillRect(QRectF(0, bar_h - 1, w, 1), line)
+
+        # Inner edge, brightest along the top like light catching the rim.
+        side = config.GLASS_EDGE_TYPING_ALPHA if self._typing else config.GLASS_EDGE_ALPHA
+        edge = QLinearGradient(0, 0, 0, h)
+        edge.setColorAt(0.0, white(max(side, config.GLASS_EDGE_TOP_ALPHA)))
+        edge.setColorAt(min(0.99, r / h), white(side))
+        edge.setColorAt(1.0, white(side))
+        width = 1.5 if self._typing else 1.0
+        p.setPen(QPen(QBrush(edge), width))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        inset = width / 2
+        p.drawRoundedRect(rect.adjusted(inset, inset, -inset, -inset), r - inset, r - inset)

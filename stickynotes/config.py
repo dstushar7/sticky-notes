@@ -43,11 +43,42 @@ SIZE_RELOCK_DELAY_MS = 1500
 DELETE_CONFIRM_WINDOW_MS = 4000   # how long Delete stays armed
 
 # Shape tokens
-CORNER_RADIUS_PX = 12        # matches current GNOME/Ubuntu windows
-PANEL_RADIUS_PX = 14         # options menu, toast
+CORNER_RADIUS_PX = 16        # glass notes
+PANEL_RADIUS_PX = 16         # options menu
+TOAST_RADIUS_PX = 14
 
-# Per-note opacity: only the paper fades, and only while the note is idle.
-# Notes saved before v4 have no value and stay opaque.
+# Glass notes. A note is painted bottom to top as frost, colour tint, sheen and a
+# bright edge (widgets.GlassSurface). Only the tint changes with the note's state:
+#   tint = GLASS_SLIDER_SHARE * opacity slider (0.5..1) + a base for the state
+# so the slider still works but never thins the colour until text stops reading.
+GLASS_SLIDER_SHARE = 0.30
+# Base tint by (compositor blurs behind the note?, dark note?). Without blur the
+# desktop shows through sharp, so the glass carries more colour.
+GLASS_TINT_BASE = {
+    (False, False): {"idle": 0.52, "hover": 0.57, "typing": 0.64},
+    (False, True):  {"idle": 0.52, "hover": 0.57, "typing": 0.64},
+    (True,  False): {"idle": 0.32, "hover": 0.40, "typing": 0.58},
+    (True,  True):  {"idle": 0.40, "hover": 0.46, "typing": 0.62},
+}
+# Under the tint, so pastels stay their own colour over a dark desktop.
+GLASS_FROST_LIGHT = ("#FFFFFF", 0.46)
+GLASS_FROST_DARK = ("#000000", 0.34)
+# Diagonal highlight from the top-left corner, white at this alpha fading to 0.
+GLASS_SHEEN_LIGHT = 0.42
+GLASS_SHEEN_DARK = 0.14
+GLASS_SHEEN_ANGLE_DEG = 155          # CSS convention: 180 points straight down
+# Title bar: a vertical white sheen (top alpha, bottom alpha) and a hairline under it.
+GLASS_BAR_SHEEN_LIGHT = (0.22, 0.04)
+GLASS_BAR_SHEEN_DARK = (0.08, 0.0)
+GLASS_BAR_LINE_LIGHT = ("#000000", 0.07)
+GLASS_BAR_LINE_DARK = ("#FFFFFF", 0.08)
+# 1px inner edge: white, brightest along the top.
+GLASS_EDGE_ALPHA = 0.38
+GLASS_EDGE_TOP_ALPHA = 0.75
+GLASS_EDGE_TYPING_ALPHA = 0.80       # the note being typed in gets a firmer edge
+
+# Per-note opacity: thins the glass's colour tint (see GLASS_TINT_BASE), and only
+# while the note is idle. Notes saved before v4 have no value and get the full tint.
 OPACITY_MIN = 50             # below this, light notes stop reading as notes
 OPACITY_MAX = 100
 OPACITY_STEP = 5
@@ -66,7 +97,6 @@ EDITED_LABEL_REFRESH_MS = 30_000
 TRAY_MENU_RECENT_COUNT = 5
 
 # Shadow profiles: (blur radius, y offset, alpha 0-255).
-SHADOW_BUTTON_CHIP    = (6,  2, 90)
 SHADOW_BODY_EXPANDED  = (24, 5, 130)
 SHADOW_BODY_COLLAPSED = (14, 4, 175)
 SHADOW_PANEL          = (16, 4, 80)

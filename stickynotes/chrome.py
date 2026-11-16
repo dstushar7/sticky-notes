@@ -763,12 +763,13 @@ class Toast(QWidget):
         outer.setContentsMargins(10, 10, 10, 10)
         body = QFrame(self)
         body.setObjectName("toastBody")
-        body.setStyleSheet("""
-            QFrame#toastBody { background-color: #1E2026; border-radius: 12px; }
-            QLabel { color: #FFFFFF; background: transparent; font-size: 10pt; }
-            QPushButton { background-color: #34373F; color: #FBE36E; border: none;
-                          border-radius: 8px; padding: 5px 12px; font-weight: 700; }
-            QPushButton:hover { background-color: #41454E; }
+        body.setStyleSheet(f"""
+            QFrame#toastBody {{ background-color: #1E2026; border-radius: {config.TOAST_RADIUS_PX}px;
+                               border: 1px solid rgba(255, 255, 255, 0.14); }}
+            QLabel {{ color: #FFFFFF; background: transparent; font-size: 10pt; border: none; }}
+            QPushButton {{ background-color: #34373F; color: #FBE36E; border: none;
+                          border-radius: 8px; padding: 5px 12px; font-weight: 700; }}
+            QPushButton:hover {{ background-color: #41454E; }}
         """)
         lay = QHBoxLayout(body)
         lay.setContentsMargins(16, 8, 8 if action else 16, 8)

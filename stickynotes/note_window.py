@@ -22,7 +22,7 @@ from . import config
 from . import utils
 from . import xwm
 from . import sharing
-from .widgets import FloatingButton, MenuRow
+from .widgets import FloatingButton, MenuRow, GlassSurface
 from .richtext import sanitized_fragment, style_for_indent
 
 
@@ -301,18 +301,23 @@ class NoteTextEdit(QTextEdit):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Checkbox colours, kept in step with the paper by StickyNote._apply_surface.
+        # Checkbox colours, set by StickyNote._apply_theme. `_surface` is the note's
+        # colour (for the tick); `_glass` is the surface behind the text.
         self._surface = QColor("#FFF39C")
         self._ink = QColor("#2B2410")
+        self._glass = None
 
     def set_paint_colors(self, surface: QColor, ink: QColor):
         self._surface = QColor(surface)
         self._ink = QColor(ink)
         self.viewport().update()
 
+    def set_glass(self, glass: GlassSurface):
+        self._glass = glass
+
     def paintEvent(self, event):   # noqa: N802 (Qt naming)
-        """Draw rounded checkboxes over Qt's square markers, which can't be restyled: refill
-        the marker band with the paper colour, then draw our own box. Visual only.
+        """Draw rounded checkboxes over Qt's square markers, which can't be restyled: wipe
+        the marker band back to bare glass, then draw our own box. Visual only.
         """
         super().paintEvent(event)
         doc = self.document()
@@ -339,9 +344,18 @@ class NoteTextEdit(QTextEdit):
         text_x = self.cursorRect(QTextCursor(block)).left()
         top = block_top + line.y()
         height = line.height()
+        # Whole pixels, so the repainted patch has no soft seam around it.
+        patch = QRectF(text_x - band - 2, top, band + 1, height).toAlignedRect()
+        p.save()
+        p.setClipRect(patch)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        p.fillRect(QRectF(text_x - band - 2, top, band + 1, height), self._surface)
+        p.fillRect(patch, Qt.GlobalColor.transparent)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        if self._glass is not None:
+            origin = self.viewport().mapTo(self._glass, QPoint(0, 0))
+            p.translate(-origin.x(), -origin.y())
+            self._glass.paint_glass(p)
+        p.restore()
 
         size = max(12.0, min(band - 3.0, QFontMetricsF(self.font()).height() * 0.62))
         box = QRectF(text_x - band + (band - size) / 2 - 2, top + (height - size) / 2, size, size)
@@ -1248,8 +1262,8 @@ class DragHandle(QWidget):
         layout.addWidget(self._drag_area)
 
     def apply_bg(self, color: str):
-        """Always 'transparent' since v4: only the title bar paints the bar colour, or the
-        layers' opacity would stack. Styled directly; parent cascading is unreliable.
+        """Always 'transparent': the glass behind the bar is the only layer that paints.
+        Styled directly; parent cascading is unreliable.
         """
         self.setStyleSheet(
             f"QWidget#dragHandle {{ background-color: {color}; }}"
@@ -1258,12 +1272,14 @@ class DragHandle(QWidget):
             f"QWidget#dragArea {{ background-color: {color}; }}"
         )
 
-    def set_progress(self, done: int, total: int, visible: bool, text_color: str, chip_bg: str):
+    def set_progress(self, done: int, total: int, visible: bool, text_color: str,
+                     chip_bg: str, chip_border: str):
         self.progress_badge.setText(f"{done}/{total}")
         self.progress_badge.setToolTip(f"{done} of {total} done")
         self.progress_badge.setStyleSheet(
             f"QLabel#progressBadge {{ color: {text_color}; background-color: {chip_bg};"
-            f" border-radius: 7px; padding: 1px 7px; font-size: 8.5pt; font-weight: 700; }}"
+            f" border: 1px solid {chip_border}; border-radius: 7px; padding: 0px 6px;"
+            f" font-size: 8.5pt; font-weight: 700; }}"
         )
         self.progress_badge.setVisible(visible and total > 0)
 
@@ -1287,16 +1303,10 @@ class TitleBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("titleBar")
-        # Paint our own background instead of the parent's body colour.
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # No background of its own: GlassSurface paints the bar's sheen and hairline.
         self.setFixedHeight(config.TITLE_BAR_HEIGHT)
-        # Remembered so the stylesheet can be rebuilt without re-passing everything.
-        self._title_bg = "#FBE36E"
-        # Paper opacity of the bar (0..1), kept in step with the note body.
-        self._alpha = 1.0
         # Remembered so the thumbtack can be repainted on toggle.
         self._btn_color = "#1a1a1a"
-        self._is_collapsed_style = False
         self._setup_ui()
 
     def _setup_ui(self):
@@ -1353,12 +1363,6 @@ class TitleBar(QWidget):
         self.pin_btn.setVisible(show_pin)
         self.opts_btn.setVisible(show_opts)
 
-    def set_surface_alpha(self, alpha: float):
-        if abs(alpha - self._alpha) < 0.002:
-            return
-        self._alpha = alpha
-        self._rebuild_bar_style()
-
     def set_pinned(self, pinned: bool):
         """Show the pinned state without emitting pinToggled (used when restoring a note)."""
         self.pin_btn.blockSignals(True)
@@ -1374,12 +1378,9 @@ class TitleBar(QWidget):
         ))
         self.pin_btn.setIconSize(QSize(icon_px, icon_px))
 
-    def apply_colors(self, title_bg: str, btn_color: str, hover_overlay: str,
-                     is_dark_theme: bool):
-        """Restyle the bar, its buttons and the title pill for a theme."""
-        self._title_bg = title_bg
+    def apply_colors(self, btn_color: str, hover_overlay: str, is_dark_theme: bool):
+        """Restyle the bar's buttons and the title pill for a theme."""
         self._btn_color = btn_color
-        self._rebuild_bar_style()
         FloatingButton.apply_theme_to_all(
             (self.add_btn, self.pin_btn, self.opts_btn), btn_color, is_dark_theme
         )
@@ -1388,26 +1389,6 @@ class TitleBar(QWidget):
         # DragHandle styles itself and its drag area directly.
         self.drag_handle.apply_bg("transparent")
         self.drag_handle.title_widget.apply_text_style(btn_color, hover_overlay)
-
-    def set_collapsed_style(self, collapsed: bool):
-        """Rounded top only for an open note, rounded all round while collapsed."""
-        if self._is_collapsed_style == collapsed:
-            return
-        self._is_collapsed_style = collapsed
-        self._rebuild_bar_style()
-
-    def _rebuild_bar_style(self):
-        r = config.CORNER_RADIUS_PX
-        bottom_radius = r if self._is_collapsed_style else 0
-        self.setStyleSheet(f"""
-            QWidget#titleBar {{
-                background-color: {rgba(self._title_bg, self._alpha)};
-                border-top-left-radius: {r}px;
-                border-top-right-radius: {r}px;
-                border-bottom-left-radius: {bottom_radius}px;
-                border-bottom-right-radius: {bottom_radius}px;
-            }}
-        """)
 
     def set_title_text(self, text: str):
         """Show the title (elided inside the drag handle)."""
@@ -1622,12 +1603,14 @@ class StickyNote(QWidget):
         self._options_panel = None
         self._anim_group = None
 
-        # `_opacity` is the saved preference; `_surface_alpha` is what's painted now
-        # (100% while hovered or typing).
+        # `_opacity` is the saved preference; `_surface_alpha` is the glass tint painted
+        # right now (see _target_tint).
         self._opacity = self._clamp_opacity(opacity)
         self._hovered = False
         self._typing = False
         self._surface_alpha = 1.0
+        # Whether the compositor blurs behind the note; picks the tint levels.
+        self._blur = xwm.blur_behind_available()
         self._flashing = False
         self._theme = utils.get_theme(theme)
         self._alpha_anim = QVariantAnimation(self)
@@ -1733,7 +1716,7 @@ class StickyNote(QWidget):
         self.text_edit.textChanged.connect(self._on_body_changed)
 
         # Start idle: the saved opacity, footer showing "Edited …".
-        self._apply_surface(self._opacity / 100.0, force=True)
+        self._apply_surface(self._target_tint(), force=True)
         self._refresh_chrome_state()
         self._refresh_progress()
 
@@ -1749,6 +1732,7 @@ class StickyNote(QWidget):
         Deferred one event-loop pass; repeating it is harmless.
         """
         super().showEvent(event)
+        self._update_blur_region()
         if self._is_pinned:
             QTimer.singleShot(0, lambda: xwm.set_always_on_top(self, True))
         if self._hide_from_dock:
@@ -1794,7 +1778,7 @@ class StickyNote(QWidget):
         outer.setContentsMargins(g, g, g, g)
         outer.setSpacing(0)
 
-        self.bg_widget = QWidget(self)
+        self.bg_widget = GlassSurface(self)
         self.bg_widget.setObjectName("noteBackground")
 
         bg_layout = QVBoxLayout(self.bg_widget)
@@ -1810,11 +1794,10 @@ class StickyNote(QWidget):
         self.title_bar.titleCommitted.connect(self._on_title_committed)
         bg_layout.addWidget(self.title_bar)
 
-        # bg_widget paints nothing; the bar and body paint their own colour, so no area of
-        # a see-through note gets two translucent layers.
+        # bg_widget paints the whole glass; the bar and body paint nothing, so no area of
+        # the note gets two translucent layers.
         self.body_widget = QWidget(self.bg_widget)
         self.body_widget.setObjectName("noteBody")
-        self.body_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         body_layout = QVBoxLayout(self.body_widget)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
@@ -1827,6 +1810,7 @@ class StickyNote(QWidget):
         self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # Narrower than Qt's 40px default: notes are small.
         self.text_edit.document().setIndentWidth(config.LIST_INDENT_PX)
+        self.text_edit.set_glass(self.bg_widget)
         body_layout.addWidget(self.text_edit)
         # Display-only styling of ticked items (see ChecklistHighlighter).
         self._highlighter = ChecklistHighlighter(self.text_edit.document())
@@ -1898,7 +1882,6 @@ class StickyNote(QWidget):
 
     def _apply_theme(self, theme: dict):
         self._theme = theme
-        title_bg = theme["title"]
         text_color = theme["text"]
 
         # Dark themes (charcoal) need light button tints and hover overlays.
@@ -1918,10 +1901,10 @@ class StickyNote(QWidget):
                 "rgba(0, 0, 0, 0.40)",
             )
 
-        # bg_widget paints nothing itself (see _setup_ui); the bar and body do.
-        self.bg_widget.setStyleSheet("QWidget#noteBackground { background: transparent; }")
-        self.title_bar.apply_colors(title_bg, btn_color, hover_overlay, is_dark)
-        # The format bar sits on the paper now, not on a separate coloured band.
+        self.bg_widget.set_theme(theme)
+        self.text_edit.set_paint_colors(QColor(theme["bg"]), QColor(text_color))
+        self.title_bar.apply_colors(btn_color, hover_overlay, is_dark)
+        # The format bar sits on the glass, not on a separate coloured band.
         self.format_bar.apply_colors("transparent", btn_color, is_dark)
         self.footer.apply_colors(text_color)
         self._highlighter.set_ink(text_color)
@@ -1967,7 +1950,9 @@ class StickyNote(QWidget):
         font.setFamilies(["Segoe UI", "Ubuntu", "Sans Serif"])
         font.setPointSize(config.FONT_SIZE)
         self.text_edit.setFont(font)
-        self._apply_surface(self._surface_alpha, force=True)
+        # Light and dark notes have different tint levels, so re-derive rather than keep.
+        self._alpha_anim.stop()
+        self._apply_surface(self._target_tint(), force=True)
         self._refresh_progress()
 
     # Opacity, hover chrome and the footer
@@ -1982,33 +1967,63 @@ class StickyNote(QWidget):
         value = int(round(value / step) * step)
         return max(config.OPACITY_MIN, min(config.OPACITY_MAX, value))
 
+    def _target_tint(self) -> float:
+        """Glass tint (0..1) for the pointer/keyboard state. Hovering or typing ignores
+        the slider and adds colour, so nobody edits thin glass. While the ••• menu is
+        open the note keeps its idle look, so the slider shows its effect.
+        """
+        panel_open = self._options_panel is not None
+        if self._typing and not panel_open:
+            state, slider = "typing", 1.0
+        elif self._hovered and not panel_open:
+            state, slider = "hover", 1.0
+        else:
+            state, slider = "idle", self._opacity / 100.0
+        base = config.GLASS_TINT_BASE[(self._blur, bool(self._theme.get("dark")))]
+        return config.GLASS_SLIDER_SHARE * slider + base[state]
+
     def _apply_surface(self, alpha: float, force: bool = False):
-        """Paint the paper at `alpha` (0..1). The shadow thins with it, or it would show
-        through a see-through note as a grey smudge.
+        """Paint the glass with its colour tint at `alpha` (0..1). The shadow thins with
+        it, or it would show through the note as a grey smudge.
         """
         if not force and abs(alpha - self._surface_alpha) < 0.002:
             return
         self._surface_alpha = alpha
-        theme = self._theme
-        r = config.CORNER_RADIUS_PX
-        self.body_widget.setStyleSheet(f"""
-            QWidget#noteBody {{
-                background-color: {rgba(theme['bg'], alpha)};
-                border-bottom-left-radius: {r}px;
-                border-bottom-right-radius: {r}px;
-            }}
-        """)
-        self.title_bar.set_surface_alpha(alpha)
-        surface = QColor(theme["bg"])
-        surface.setAlphaF(alpha)
-        self.text_edit.set_paint_colors(surface, QColor(theme["text"]))
+        self.bg_widget.set_tint_alpha(alpha)
+        # The checkboxes repaint the glass under themselves.
+        self.text_edit.viewport().update()
         if not self._flashing:
             self._apply_shadow()
+
+    def _update_blur_region(self):
+        """Tell KWin which part of the window to blur: the note, not its shadow gutter.
+        The corners are cut to the note's radius, or blurred squares would poke out.
+        """
+        if not self._blur:
+            return
+        dpr = self.devicePixelRatioF()
+        # From the window size, not bg_widget's geometry: during a resize the layout
+        # hasn't moved the child yet.
+        g = config.SHADOW_GUTTER
+        x, y = round(g * dpr), round(g * dpr)
+        w, h = round((self.width() - 2 * g) * dpr), round((self.height() - 2 * g) * dpr)
+        if w < 2 or h < 2:
+            return
+        r = int(min(config.CORNER_RADIUS_PX * dpr, w / 2, h / 2))
+        # One strip per pixel row inside the corner arcs, one rectangle for the rest.
+        rects = []
+        for row in range(r):
+            inset = round(r - (r * r - (r - row - 0.5) ** 2) ** 0.5)
+            rects.append((x + inset, y + row, w - 2 * inset, 1))
+            rects.append((x + inset, y + h - 1 - row, w - 2 * inset, 1))
+        if h > 2 * r:
+            rects.append((x, y + r, w, h - 2 * r))
+        xwm.set_blur_behind(self, rects)
 
     def _apply_shadow(self):
         profile = config.SHADOW_BODY_COLLAPSED if self._is_collapsed else config.SHADOW_BODY_EXPANDED
         blur, offset_y, alpha = profile
-        k = self._surface_alpha ** 3      # 1.0 solid -> ~0.34 at 70% -> ~0.13 at 50%
+        k = self.bg_widget.coverage() ** 3      # thinner glass, fainter shadow
         self._bg_shadow.setBlurRadius(blur)
         self._bg_shadow.setOffset(0, offset_y)
         self._bg_shadow.setColor(QColor(0, 0, 0, int(alpha * k)))
@@ -2021,11 +2036,10 @@ class StickyNote(QWidget):
             show_opts=self._hovered or panel_open,
         )
         self.footer.show_toolbar(self._typing)
+        self.bg_widget.set_typing(self._typing)
         if not self._typing:
             self._refresh_edited_label()
-        # While the ••• menu is open, preview the idle look so the slider shows its effect.
-        solid = (self._hovered or self._typing) and not panel_open
-        target = 1.0 if solid else self._opacity / 100.0
+        target = self._target_tint()
         if abs(target - self._surface_alpha) < 0.002:
             return
         self._alpha_anim.stop()
@@ -2038,9 +2052,13 @@ class StickyNote(QWidget):
 
     def _refresh_progress(self):
         done, total = checklist_progress(self.text_edit.document())
-        chip = "rgba(255, 255, 255, 0.14)" if self._theme.get("dark") else "rgba(255, 255, 255, 0.55)"
+        # Same frosted pill as the title bar buttons.
+        if self._theme.get("dark"):
+            chip, rim = "rgba(255, 255, 255, 0.10)", "rgba(255, 255, 255, 0.16)"
+        else:
+            chip, rim = "rgba(255, 255, 255, 0.30)", "rgba(255, 255, 255, 0.45)"
         self.title_bar.drag_handle.set_progress(
-            done, total, self._is_collapsed, self._btn_color, chip
+            done, total, self._is_collapsed, self._btn_color, chip, rim
         )
 
     def enterEvent(self, event):   # noqa: N802
@@ -2175,8 +2193,6 @@ class StickyNote(QWidget):
         self._is_collapsed = True
         # Commit any rename in progress, then lock the title while collapsed.
         self.title_bar.set_title_editable(False)
-        # Round all four corners and switch to the collapsed shadow.
-        self.title_bar.set_collapsed_style(True)
         self._apply_collapsed_shadow()
         self._refresh_progress()
 
@@ -2206,8 +2222,6 @@ class StickyNote(QWidget):
         target_h = max(self._pre_collapse_height, config.MIN_NOTE_HEIGHT)
         # Re-enable title click-to-rename now that the body is back.
         self.title_bar.set_title_editable(True)
-        # Square the bottom corners again and restore the body shadow.
-        self.title_bar.set_collapsed_style(False)
         self._apply_expanded_shadow()
 
         self.body_widget.show()
@@ -2233,7 +2247,6 @@ class StickyNote(QWidget):
         collapsed_h = config.TITLE_BAR_HEIGHT + 2 * config.SHADOW_GUTTER
         self._is_collapsed = True
         self.title_bar.set_title_editable(False)
-        self.title_bar.set_collapsed_style(True)
         self._apply_collapsed_shadow()
         self.body_widget.hide()
         self._refresh_progress()
@@ -2590,6 +2603,7 @@ class StickyNote(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._update_blur_region()
         # Scale format-bar buttons proportionally to note width
         if hasattr(self, "format_bar"):
             # 30px buttons at ~320px window; clamped by FormatBar to [24, 34]
